@@ -1,16 +1,17 @@
 Package: RGAN
-Title: What the Package Does (One Line, Title Case)
+Title: Generative Adversarial Nets (GAN) in R
 Version: 0.0.0.9000
 Authors@R: 
-    person(given = "First",
-           family = "Last",
+    person(given = "Marcel",
+           family = "Neunhoeffer",
            role = c("aut", "cre"),
-           email = "first.last@example.com",
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+           email = "marcel.neunhoeffer@stat.uni-muenchen.de",
+           comment = c(ORCID = "0000-0002-9137-5785"))
+Description: The package makes it easy to get started with Generative Adversarial Nets in R.
+License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.1
+Imports: 
+    torch

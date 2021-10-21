@@ -58,14 +58,14 @@ GANTrainer <-
 
     steps <- nrow(data) %/% batch_size
 
-    if(class(noise_distribution) == "function"){
+    if (class(noise_distribution) == "function") {
       sample_noise <- noise_distribution
     } else {
       if (noise_distribution == "normal") {
         sample_noise <- torch::torch_randn
       }
 
-      if(noise_distribution == "uniform") {
+      if (noise_distribution == "uniform") {
         sample_noise <- torch::torch_rand
       }
     }
@@ -73,51 +73,50 @@ GANTrainer <-
     if (class(value_function) == "function") {
       value_fct <- value_function
     } else {
+      if (is.null(value_function) | value_function == "original") {
+        value_fct <- function(real_scores, fake_scores) {
+          d_loss <-
+            torch::torch_log(real_scores) + torch::torch_log(1 - fake_scores)
+          d_loss <- -d_loss$mean()
 
 
-    if (is.null(value_function) | value_function == "original") {
-      value_fct <- function(real_scores, fake_scores) {
-        d_loss <- torch::torch_log(real_scores) + torch::torch_log(1 - fake_scores)
-        d_loss <- -d_loss$mean()
+          g_loss <- torch::torch_log(1 - fake_scores)
 
+          g_loss <- g_loss$mean()
 
-        g_loss <- torch::torch_log(1 - fake_scores)
+          return(list(d_loss = d_loss,
+                      g_loss = g_loss))
 
-        g_loss <- g_loss$mean()
-
-        return(list(d_loss = d_loss,
-                    g_loss = g_loss))
-
-      }
-    }
-
-    if (value_function == "wasserstein") {
-      value_fct <- function(real_scores, fake_scores) {
-        d_loss <-
-          torch::torch_mean(real_scores) - torch::torch_mean(fake_scores)
-        d_loss <- -d_loss$mean()
-
-
-        g_loss <- torch::torch_mean(fake_scores)
-
-        g_loss <- -g_loss$mean()
-
-        return(list(d_loss = d_loss,
-                    g_loss = g_loss))
-
-      }
-
-      weight_clipper <- function(){
-        for (parameter in names(d_net$parameters)) {
-          d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
         }
       }
 
+      if (value_function == "wasserstein") {
+        value_fct <- function(real_scores, fake_scores) {
+          d_loss <-
+            torch::torch_mean(real_scores) - torch::torch_mean(fake_scores)
+          d_loss <- -d_loss$mean()
+
+
+          g_loss <- torch::torch_mean(fake_scores)
+
+          g_loss <- -g_loss$mean()
+
+          return(list(d_loss = d_loss,
+                      g_loss = g_loss))
+
+        }
+
+        weight_clipper <- function() {
+          for (parameter in names(d_net$parameters)) {
+            d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
+          }
+        }
+
       }
 
     }
 
-    }
+
 
 
 
@@ -254,9 +253,9 @@ GANTrainer <-
             sample_synthetic_data(g_net, fixed_z, device)
           # Now we plot the training data.
           plot(
-            train_samples,
+            train_samples[, 1:2],
             bty = "n",
-            col = viridis(2, alpha = 0.7)[1],
+            col = viridis::viridis(2, alpha = 0.7)[1],
             #xlim = c(-50, 50),
             pch = 19,
             xlab = "Var 1",
@@ -266,9 +265,9 @@ GANTrainer <-
           )
           # And we add the synthetic data on top.
           points(
-            synth_data,
+            synth_data[, 1:2],
             bty = "n",
-            col = viridis(2, alpha = 0.7)[2],
+            col = viridis::viridis(2, alpha = 0.7)[2],
             pch = 19
           )
           # Finally a legend to understand the plot.
@@ -276,7 +275,7 @@ GANTrainer <-
             "topleft",
             bty = "n",
             pch = 19,
-            col = viridis(2),
+            col = viridis::viridis(2),
             legend = c("Real", "Synthetic")
           )
         }

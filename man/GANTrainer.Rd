@@ -13,6 +13,7 @@ GANTrainer(
   generator_optimizer = NULL,
   discriminator = NULL,
   discriminator_optimizer = NULL,
+  weight_clipper = NULL,
   batch_size = 50,
   epochs = 150,
   plot = FALSE,

@@ -88,6 +88,9 @@ GANTrainer <-
                       g_loss = g_loss))
 
         }
+
+        weight_clipper <- function(d_net) {
+        }
       }
 
       if (value_function == "wasserstein") {
@@ -106,7 +109,7 @@ GANTrainer <-
 
         }
 
-        weight_clipper <- function() {
+        weight_clipper <- function(d_net) {
           for (parameter in names(d_net$parameters)) {
             d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
           }

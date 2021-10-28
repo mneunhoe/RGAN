@@ -116,6 +116,28 @@ GANTrainer <-
         }
 
       }
+      if (value_function == "f-wgan") {
+        value_fct <- function(real_scores, fake_scores) {
+          d_loss <-
+            kl_real(real_scores) + kl_fake(fake_scores)
+          d_loss <- d_loss$mean()
+
+
+          g_loss <-  kl_gen(fake_scores)
+
+          g_loss <- g_loss$mean()
+
+          return(list(d_loss = d_loss,
+                      g_loss = g_loss))
+
+        }
+
+        weight_clipper <- function(d_net) {
+
+        }
+
+      }
+
 
     }
 
@@ -176,7 +198,7 @@ GANTrainer <-
       # d_loss <- -d_loss$mean()
 
       # Clip
-      weight_clipper()
+      weight_clipper(d_net)
       # if (value_function == "wasserstein") {
       #   for (parameter in names(d_net$parameters)) {
       #     d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)

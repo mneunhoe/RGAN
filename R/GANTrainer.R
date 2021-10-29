@@ -150,114 +150,126 @@ GANTrainer <-
       sample_noise(c(nrow(data), noise_dim))$to(device = device)
 
     for (i in 1:(epochs * steps)) {
-      ###########################
-      # Sample Batch of Data
-      ###########################
-
-      # For each training iteration we need a fresh (mini-)batch from our data.
-      # So we first sample random IDs from our data set.
-      batch_idx <- sample(nrow(data), size = batch_size)
-
-      # Then we subset the data set (x is the torch version of the data) to our fresh batch.
-      real_data <- data[batch_idx]$to(device = device)
-
-      ###########################
-      # Update the Discriminator
-      ###########################
-
-      # In a GAN we also need a noise sample for each training iteration.
-      # torch_randn creates a torch object filled with draws from a standard normal distribution
-
-      z <-
-        sample_noise(c(batch_size, noise_dim))$to(device = device)
-
-
-      # Now our Generator net produces fake data based on the noise sample.
-      # Since we want to update the Discriminator, we do not need to calculate the gradients of the Generator net.
-      fake_data <- torch::with_no_grad(g_net(input = z))
-
-      # The Discriminator net now computes the scores for fake and real data
-      dis_real <- d_net(real_data)
-      dis_fake <- d_net(fake_data)
-
-      # We combine these scores to give our discriminator loss
-      # d_loss <- kl_real(dis_real) + kl_fake(dis_fake)
-      # d_loss <- d_loss$mean()
-
-      # Gan loss
-      # d_loss <- torch_log(dis_real) + torch_log(1-dis_fake)
-      # d_loss <- -d_loss$mean()
-
+      # ###########################
+      # # Sample Batch of Data
+      # ###########################
+      #
+      # # For each training iteration we need a fresh (mini-)batch from our data.
+      # # So we first sample random IDs from our data set.
+      # batch_idx <- sample(nrow(data), size = batch_size)
+      #
+      # # Then we subset the data set (x is the torch version of the data) to our fresh batch.
+      # real_data <- data[batch_idx]$to(device = device)
+      #
+      # ###########################
+      # # Update the Discriminator
+      # ###########################
+      #
+      # # In a GAN we also need a noise sample for each training iteration.
+      # # torch_randn creates a torch object filled with draws from a standard normal distribution
+      #
+      # z <-
+      #   sample_noise(c(batch_size, noise_dim))$to(device = device)
+      #
+      #
+      # # Now our Generator net produces fake data based on the noise sample.
+      # # Since we want to update the Discriminator, we do not need to calculate the gradients of the Generator net.
+      # fake_data <- torch::with_no_grad(g_net(input = z))
+      #
+      # # The Discriminator net now computes the scores for fake and real data
+      # dis_real <- d_net(real_data)
+      # dis_fake <- d_net(fake_data)
+      #
+      # # We combine these scores to give our discriminator loss
+      # # d_loss <- kl_real(dis_real) + kl_fake(dis_fake)
+      # # d_loss <- d_loss$mean()
+      #
+      # # Gan loss
+      # # d_loss <- torch_log(dis_real) + torch_log(1-dis_fake)
+      # # d_loss <- -d_loss$mean()
+      #
+      # # # WGAN loss
+      # #
+      #
+      # d_loss <- value_fct(dis_real, dis_fake)[["d_loss"]]
+      #
+      # # d_loss <-
+      # #   torch::torch_mean(dis_real) - torch::torch_mean(dis_fake)
+      # # d_loss <- -d_loss$mean()
+      #
+      # # Clip
+      # weight_clipper(d_net)
+      # # if (value_function == "wasserstein") {
+      # #   for (parameter in names(d_net$parameters)) {
+      # #     d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
+      # #   }
+      # #
+      # # }
+      #
+      # # What follows is one update step for the Discriminator net
+      #
+      # # First set all previous gradients to zero
+      # d_optim$zero_grad()
+      #
+      # # Pass the loss backward through the net
+      # d_loss$backward()
+      #
+      # # Take one step of the optimizer
+      # d_optim$step()
+      #
+      # ###########################
+      # # Update the Generator
+      # ###########################
+      #
+      # # To update the Generator we will use a fresh noise sample.
+      # # torch_randn creates a torch object filled with draws from a standard normal distribution
+      #
+      # z <-
+      #   sample_noise(c(batch_size, noise_dim))$to(device = device)
+      #
+      #
+      # # Now we can produce new fake data
+      # fake_data <- g_net(z)
+      #
+      # # The Discriminator now scores the new fake data
+      # dis_fake <- d_net(fake_data)
+      #
+      # # Now we can calculate the Generator loss
+      # # g_loss = kl_gen(dis_fake)
+      #
+      # # g_loss <- torch_log(1-dis_fake)
+      # #
+      # # g_loss = g_loss$mean()
+      #
       # # WGAN loss
       #
-
-      d_loss <- value_fct(dis_real, dis_fake)[["d_loss"]]
-
-      # d_loss <-
-      #   torch::torch_mean(dis_real) - torch::torch_mean(dis_fake)
-      # d_loss <- -d_loss$mean()
-
-      # Clip
-      weight_clipper(d_net)
-      # if (value_function == "wasserstein") {
-      #   for (parameter in names(d_net$parameters)) {
-      #     d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
-      #   }
+      # # g_loss <- torch::torch_mean(dis_fake)
+      # # #
+      # # g_loss <- -g_loss$mean()
       #
-      # }
-
-      # What follows is one update step for the Discriminator net
-
-      # First set all previous gradients to zero
-      d_optim$zero_grad()
-
-      # Pass the loss backward through the net
-      d_loss$backward()
-
-      # Take one step of the optimizer
-      d_optim$step()
-
-      ###########################
-      # Update the Generator
-      ###########################
-
-      # To update the Generator we will use a fresh noise sample.
-      # torch_randn creates a torch object filled with draws from a standard normal distribution
-
-      z <-
-        sample_noise(c(batch_size, noise_dim))$to(device = device)
-
-
-      # Now we can produce new fake data
-      fake_data <- g_net(z)
-
-      # The Discriminator now scores the new fake data
-      dis_fake <- d_net(fake_data)
-
-      # Now we can calculate the Generator loss
-      # g_loss = kl_gen(dis_fake)
-
-      # g_loss <- torch_log(1-dis_fake)
+      # g_loss <- value_fct(dis_real, dis_fake)[["g_loss"]]
+      # # And take an update step of the Generator
       #
-      # g_loss = g_loss$mean()
+      # # First set all previous gradients to zero
+      # g_optim$zero_grad()
+      #
+      # # Pass the loss backward through the net
+      # g_loss$backward()
+      #
+      # # Take one step of the optimizer
+      # g_optim$step()
 
-      # WGAN loss
-
-      # g_loss <- torch::torch_mean(dis_fake)
-      # #
-      # g_loss <- -g_loss$mean()
-
-      g_loss <- value_fct(dis_real, dis_fake)[["g_loss"]]
-      # And take an update step of the Generator
-
-      # First set all previous gradients to zero
-      g_optim$zero_grad()
-
-      # Pass the loss backward through the net
-      g_loss$backward()
-
-      # Take one step of the optimizer
-      g_optim$step()
+      GAN_update_step(data,
+                      batch_size,
+                      noise_dim,
+                      sample_noise,
+                      device,
+                      g_net,
+                      d_net,
+                      g_optim,
+                      d_optim,
+                      value_fct,
+                      weight_clipper)
 
       # This concludes one update step of the GAN. We will now repeat this many times.
 
@@ -315,5 +327,150 @@ GANTrainer <-
         discriminator_optimizer = d_optim
       )
     )
+
+  }
+
+
+#' @title GAN_update_step
+#'
+#' @description Provides a function to send the output of a DataTransformer to
+#'   a torch tensor, so that it can be accessed during GAN training.
+#'
+#' @param transformed_data Input a data set after DataTransformer
+#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#'
+#' @return A function
+#' @export
+GAN_update_step <-
+  function(data,
+           batch_size,
+           noise_dim,
+           sample_noise,
+           device = "cpu",
+           g_net,
+           d_net,
+           g_optim,
+           d_optim,
+           value_function,
+           weight_clipper) {
+    # For each training iteration we need a fresh (mini-)batch from our data.
+    # So we first sample random IDs from our data set.
+    batch_idx <- sample(nrow(data), size = batch_size)
+
+    # Then we subset the data set (x is the torch version of the data) to our fresh batch.
+    real_data <- data[batch_idx]$to(device = device)
+
+    ###########################
+    # Update the Discriminator
+    ###########################
+
+    # In a GAN we also need a noise sample for each training iteration.
+    # torch_randn creates a torch object filled with draws from a standard normal distribution
+
+    z <-
+      sample_noise(c(batch_size, noise_dim))$to(device = device)
+
+
+    # Now our Generator net produces fake data based on the noise sample.
+    # Since we want to update the Discriminator, we do not need to calculate the gradients of the Generator net.
+    fake_data <- torch::with_no_grad(g_net(input = z))
+
+    # The Discriminator net now computes the scores for fake and real data
+    dis_real <- d_net(real_data)
+    dis_fake <- d_net(fake_data)
+
+    # We combine these scores to give our discriminator loss
+    # d_loss <- kl_real(dis_real) + kl_fake(dis_fake)
+    # d_loss <- d_loss$mean()
+
+    # Gan loss
+    # d_loss <- torch_log(dis_real) + torch_log(1-dis_fake)
+    # d_loss <- -d_loss$mean()
+
+    # # WGAN loss
+    #
+
+    d_loss <- value_function(dis_real, dis_fake)[["d_loss"]]
+
+    # d_loss <-
+    #   torch::torch_mean(dis_real) - torch::torch_mean(dis_fake)
+    # d_loss <- -d_loss$mean()
+
+    # Clip
+    weight_clipper(d_net)
+    # if (value_function == "wasserstein") {
+    #   for (parameter in names(d_net$parameters)) {
+    #     d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
+    #   }
+    #
+    # }
+
+    # What follows is one update step for the Discriminator net
+
+    # First set all previous gradients to zero
+    d_optim$zero_grad()
+
+    # Pass the loss backward through the net
+    d_loss$backward()
+
+    # Take one step of the optimizer
+    d_optim$step()
+
+    ###########################
+    # Update the Generator
+    ###########################
+
+    # To update the Generator we will use a fresh noise sample.
+    # torch_randn creates a torch object filled with draws from a standard normal distribution
+
+    z <-
+      sample_noise(c(batch_size, noise_dim))$to(device = device)
+
+
+    # Now we can produce new fake data
+    fake_data <- g_net(z)
+
+    # The Discriminator now scores the new fake data
+    dis_fake <- d_net(fake_data)
+
+    # Now we can calculate the Generator loss
+    # g_loss = kl_gen(dis_fake)
+
+    # g_loss <- torch_log(1-dis_fake)
+    #
+    # g_loss = g_loss$mean()
+
+    # WGAN loss
+
+    # g_loss <- torch::torch_mean(dis_fake)
+    # #
+    # g_loss <- -g_loss$mean()
+
+    g_loss <- value_function(dis_real, dis_fake)[["g_loss"]]
+    # And take an update step of the Generator
+
+    # First set all previous gradients to zero
+    g_optim$zero_grad()
+
+    # Pass the loss backward through the net
+    g_loss$backward()
+
+    # Take one step of the optimizer
+    g_optim$step()
+  }
+
+
+#' @title GAN_update_plot
+#'
+#' @description Provides a function to send the output of a DataTransformer to
+#'   a torch tensor, so that it can be accessed during GAN training.
+#'
+#' @param transformed_data Input a data set after DataTransformer
+#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#'
+#' @return A function
+#' @export
+GAN_update_plot <-
+  function() {
 
   }

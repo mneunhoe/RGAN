@@ -8,17 +8,18 @@ DCGAN_Generator(
   noise_dim = 100,
   image_size = 64,
   number_channels = 3,
-  ngf = 64
+  ngf = 64,
+  dropout_rate = 0.5
 )
 }
 \arguments{
 \item{noise_dim}{a}
 
+\item{dropout_rate}{dropout for each hidden layer}
+
 \item{data_dim}{b}
 
 \item{hidden_units}{list of number of neurons per layer the length of the list determines the number of hidden layers}
-
-\item{dropout_rate}{dropout for each hidden layer}
 }
 \value{
 A neural net class for the DCGAN Generator

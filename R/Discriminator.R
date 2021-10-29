@@ -77,7 +77,8 @@ Discriminator <- torch::nn_module(
 DCGAN_Discriminator <- torch::nn_module(
   initialize = function(image_size = 64, # The number of columns in our data
                         number_channels = 3, # A list with the number of neurons per layer. If you add more elements to the list you create a deeper network.
-                        ndf = 64
+                        ndf = 64,
+                        dropout_rate = 0.5
   ) {
 
     # Initialize an empty nn_sequential module
@@ -92,6 +93,9 @@ DCGAN_Discriminator <- torch::nn_module(
     self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
                         name = paste0("LeakyReLU", 1))
 
+    self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
+                        name = paste0("Dropout", 1))
+
 
     self$seq$add_module(
       module =  torch::nn_conv2d(ndf, ndf * 2, 4, 2, 1, bias = FALSE),
@@ -103,6 +107,9 @@ DCGAN_Discriminator <- torch::nn_module(
 
     self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
                         name = paste0("LeakyReLU", 2))
+
+    self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
+                        name = paste0("Dropout", 2))
 
 
     self$seq$add_module(
@@ -116,6 +123,9 @@ DCGAN_Discriminator <- torch::nn_module(
     self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
                         name = paste0("LeakyReLU", 3))
 
+    self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
+                        name = paste0("Dropout", 3))
+
     self$seq$add_module(
       module =  torch::nn_conv2d(ndf*4, ndf * 8, 4, 2, 1, bias = FALSE),
       name = paste0("Conv", 4)
@@ -126,6 +136,9 @@ DCGAN_Discriminator <- torch::nn_module(
 
     self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
                         name = paste0("LeakyReLU", 4))
+
+    self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
+                        name = paste0("Dropout", 4))
 
 
     self$seq$add_module(

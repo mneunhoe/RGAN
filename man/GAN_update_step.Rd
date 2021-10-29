@@ -7,11 +7,13 @@
 GAN_update_step(
   data,
   batch_size,
+  noise_dim,
+  sample_noise,
   device = "cpu",
   g_net,
   d_net,
-  g_optimizer,
-  d_optimizer,
+  g_optim,
+  d_optim,
   value_function,
   weight_clipper
 )

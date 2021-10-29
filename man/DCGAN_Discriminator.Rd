@@ -4,7 +4,12 @@
 \alias{DCGAN_Discriminator}
 \title{DCGAN Discriminator}
 \usage{
-DCGAN_Discriminator(image_size = 64, number_channels = 3, ndf = 64)
+DCGAN_Discriminator(
+  image_size = 64,
+  number_channels = 3,
+  ndf = 64,
+  dropout_rate = 0.5
+)
 }
 \value{
 A neural net for the DCGAN Discriminator

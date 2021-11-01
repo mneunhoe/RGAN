@@ -154,10 +154,10 @@ DCGAN_Discriminator <- torch::nn_module(
       name = paste0("Conv", 5)
     )
 
-    # self$seq$add_module(
-    #   module =  torch::nn_sigmoid(),
-    #   name = paste0("Output")
-    # )
+    self$seq$add_module(
+      module =  torch::nn_sigmoid(),
+      name = paste0("Output")
+    )
 
 
 

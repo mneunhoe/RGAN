@@ -13,12 +13,13 @@
 #' @return A neural net for the Discriminator
 #' @export
 Discriminator <- torch::nn_module(
-  initialize = function(data_dim, # The number of columns in our data
-                        hidden_units = list(128, 128), # A list with the number of neurons per layer. If you add more elements to the list you create a deeper network.
-                        dropout_rate = 0.5, # The dropout probability
-                        sigmoid = FALSE
-  ) {
-
+  initialize = function(data_dim,
+                        # The number of columns in our data
+                        hidden_units = list(128, 128),
+                        # A list with the number of neurons per layer. If you add more elements to the list you create a deeper network.
+                        dropout_rate = 0.5,
+                        # The dropout probability
+                        sigmoid = FALSE) {
     # Initialize an empty nn_sequential module
     self$seq <- torch::nn_sequential()
 
@@ -47,7 +48,7 @@ Discriminator <- torch::nn_module(
     # Add an output layer to the net. Since it will be one score for each example we only need a dimension of 1.
     self$seq$add_module(module = torch::nn_linear(dim, 1),
                         name = "Output")
-    if(sigmoid){
+    if (sigmoid) {
       self$seq$add_module(module = torch::nn_sigmoid(),
                           name = "Sigmoid_Output")
     }
@@ -75,12 +76,13 @@ Discriminator <- torch::nn_module(
 #' @return A neural net for the DCGAN Discriminator
 #' @export
 DCGAN_Discriminator <- torch::nn_module(
-  initialize = function(image_size = 64, # The number of columns in our data
-                        number_channels = 3, # A list with the number of neurons per layer. If you add more elements to the list you create a deeper network.
+  initialize = function(image_size = 64,
+                        # The number of columns in our data
+                        number_channels = 3,
+                        # A list with the number of neurons per layer. If you add more elements to the list you create a deeper network.
                         ndf = 64,
-                        dropout_rate = 0.5
-  ) {
-
+                        dropout_rate = 0.5,
+                        sigmoid = FALSE) {
     # Initialize an empty nn_sequential module
     self$seq <- torch::nn_sequential()
 
@@ -90,8 +92,10 @@ DCGAN_Discriminator <- torch::nn_module(
       name = paste0("Conv", 1)
     )
 
-    self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
-                        name = paste0("LeakyReLU", 1))
+    self$seq$add_module(
+      module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
+      name = paste0("LeakyReLU", 1)
+    )
 
     self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                         name = paste0("Dropout", 1))
@@ -102,8 +106,10 @@ DCGAN_Discriminator <- torch::nn_module(
       name = paste0("Conv", 2)
     )
 
-    self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
-                        name = paste0("LeakyReLU", 2))
+    self$seq$add_module(
+      module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
+      name = paste0("LeakyReLU", 2)
+    )
 
     self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                         name = paste0("Dropout", 2))
@@ -117,14 +123,16 @@ DCGAN_Discriminator <- torch::nn_module(
 
 
     self$seq$add_module(
-      module =  torch::nn_conv2d(ndf*2, ndf * 4, 4, 2, 1, bias = FALSE),
+      module =  torch::nn_conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias = FALSE),
       name = paste0("Conv", 3)
     )
 
 
 
-    self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
-                        name = paste0("LeakyReLU", 3))
+    self$seq$add_module(
+      module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
+      name = paste0("LeakyReLU", 3)
+    )
 
     self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                         name = paste0("Dropout", 3))
@@ -133,14 +141,16 @@ DCGAN_Discriminator <- torch::nn_module(
                         name = paste0("BatchNorm", 3))
 
     self$seq$add_module(
-      module =  torch::nn_conv2d(ndf*4, ndf * 8, 4, 2, 1, bias = FALSE),
+      module =  torch::nn_conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias = FALSE),
       name = paste0("Conv", 4)
     )
 
 
 
-    self$seq$add_module(module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
-                        name = paste0("LeakyReLU", 4))
+    self$seq$add_module(
+      module =  torch::nn_leaky_relu(0.2, inplace = TRUE),
+      name = paste0("LeakyReLU", 4)
+    )
 
     self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                         name = paste0("Dropout", 4))
@@ -150,16 +160,16 @@ DCGAN_Discriminator <- torch::nn_module(
                         name = paste0("BatchNorm", 4))
 
     self$seq$add_module(
-      module =  torch::nn_conv2d(ndf*8, 1, 4, 1, 0, bias = FALSE),
+      module =  torch::nn_conv2d(ndf * 8, 1, 4, 1, 0, bias = FALSE),
       name = paste0("Conv", 5)
     )
 
-    self$seq$add_module(
-      module =  torch::nn_sigmoid(),
-      name = paste0("Output")
-    )
 
+    if (sigmoid) {
+      self$seq$add_module(module =  torch::nn_sigmoid(),
+                          name = paste0("Output"))
 
+    }
 
   },
   forward = function(input) {
@@ -167,5 +177,3 @@ DCGAN_Discriminator <- torch::nn_module(
     data
   }
 )
-
-

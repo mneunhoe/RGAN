@@ -104,8 +104,7 @@ DCGAN_Generator <- torch::nn_module(
                           name = paste0("Conv", 1)
                         )
 
-                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf * 8),
-                                            name = paste0("BatchNorm", 1))
+
 
                         self$seq$add_module(module =  torch::nn_relu(TRUE),
                                             name = paste0("ReLU", 1))
@@ -113,13 +112,15 @@ DCGAN_Generator <- torch::nn_module(
                         self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                                             name = paste0("Dropout", 1))
 
+                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf * 8),
+                                            name = paste0("BatchNorm", 1))
+
                         self$seq$add_module(
                           module =  torch::nn_conv_transpose2d(ngf * 8, ngf * 4, 4, 2, 1, bias = FALSE),
                           name = paste0("Conv", 2)
                         )
 
-                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf * 4),
-                                            name = paste0("BatchNorm", 2))
+
 
                         self$seq$add_module(module =  torch::nn_relu(TRUE),
                                             name = paste0("ReLU", 2))
@@ -127,14 +128,16 @@ DCGAN_Generator <- torch::nn_module(
                         self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                                             name = paste0("Dropout", 2))
 
+                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf * 4),
+                                            name = paste0("BatchNorm", 2))
+
 
                         self$seq$add_module(
                           module =  torch::nn_conv_transpose2d(ngf * 4, ngf * 2, 4, 2, 1, bias = FALSE),
                           name = paste0("Conv", 3)
                         )
 
-                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf * 2),
-                                            name = paste0("BatchNorm", 3))
+
 
                         self$seq$add_module(module =  torch::nn_relu(TRUE),
                                             name = paste0("ReLU", 3))
@@ -142,19 +145,24 @@ DCGAN_Generator <- torch::nn_module(
                         self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                                             name = paste0("Dropout", 3))
 
+                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf * 2),
+                                            name = paste0("BatchNorm", 3))
+
                         self$seq$add_module(
                           module =  torch::nn_conv_transpose2d(ngf * 2, ngf, 4, 2, 1, bias = FALSE),
                           name = paste0("Conv", 4)
                         )
 
-                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf),
-                                            name = paste0("BatchNorm", 4))
+
 
                         self$seq$add_module(module =  torch::nn_relu(TRUE),
                                             name = paste0("ReLU", 4))
 
                         self$seq$add_module(module =  torch::nn_dropout2d(p = dropout_rate),
                                             name = paste0("Dropout", 4))
+
+                        self$seq$add_module(module =  torch::nn_batch_norm2d(ngf),
+                                            name = paste0("BatchNorm", 4))
 
                         self$seq$add_module(
                           module =  torch::nn_conv_transpose2d(ngf, number_channels, 4, 2, 1, bias = FALSE),

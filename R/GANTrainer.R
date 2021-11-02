@@ -249,7 +249,7 @@ GAN_update_step <-
     # For each training iteration we need a fresh (mini-)batch from our data.
 
     # Then we subset the data set (x is the torch version of the data) to our fresh batch.
-    real_data <- get_batch(data)
+    real_data <- get_batch(data, batch_size, device)
 
     ###########################
     # Update the Discriminator

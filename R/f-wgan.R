@@ -9,9 +9,9 @@ kl_real <- function(dis_real) {
 }
 
 kl_fake <- function(dis_fake) {
-  # dis_fake_norm = torch::torch_exp(dis_fake)$mean()
-  # dis_fake_ratio = torch::torch_exp(dis_fake) / dis_fake_norm
-  dis_fake_ratio <- get_kl_ratio(dis_fake)
+  dis_fake_norm = torch::torch_exp(dis_fake)$mean()
+  dis_fake_ratio = torch::torch_exp(dis_fake) / dis_fake_norm
+  #dis_fake_ratio <- get_kl_ratio(dis_fake)
   dis_fake = dis_fake * dis_fake_ratio
   loss_fake = torch::torch_mean(torch::nnf_relu(1. + dis_fake))
 
@@ -19,9 +19,9 @@ kl_fake <- function(dis_fake) {
 }
 
 kl_gen <- function(dis_fake) {
-  # dis_fake_norm = torch::torch_exp(dis_fake)$mean()
-  # dis_fake_ratio = torch::torch_exp(dis_fake) / dis_fake_norm
-  dis_fake_ratio <- get_kl_ratio(dis_fake)
+  dis_fake_norm = torch::torch_exp(dis_fake)$mean()
+  dis_fake_ratio = torch::torch_exp(dis_fake) / dis_fake_norm
+  #dis_fake_ratio <- get_kl_ratio(dis_fake)
   dis_fake = dis_fake * dis_fake_ratio
   loss = -torch::torch_mean(dis_fake)
   return(loss)

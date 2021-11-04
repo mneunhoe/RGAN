@@ -15,11 +15,17 @@
 sample_synthetic_data <-
   function(g_net,
            z,
-           device
-  ) {
+           device,
+           eval_dropout = F) {
     # Pass the noise through the Generator to create fake data
-    fake_data <-  g_net(z)
 
+    if (eval_dropout) {
+      g_net$eval()
+      fake_data <-  g_net(z)
+      g_net$train()
+    } else {
+      fake_data <-  g_net(z)
+    }
     # Create an R array/matrix from the torch_tensor
     synth_data <- torch::as_array(fake_data$detach()$cpu())
     return(synth_data)

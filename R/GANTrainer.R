@@ -22,6 +22,7 @@ GANTrainer <-
            batch_size = 50,
            epochs = 150,
            plot = FALSE,
+           eval_dropout = FALSE,
            synthetic_examples = 500,
            plot_dimensions = c(1, 2),
            device = "cpu") {
@@ -163,7 +164,7 @@ GANTrainer <-
         if (plot) {
           # Create synthetic data for our plot. This synthetic data will always use the same noise sample -- fixed_z -- so it is easier for us to monitor training progress.
           synth_data <-
-            sample_synthetic_data(g_net, fixed_z, device)
+            sample_synthetic_data(g_net, fixed_z, device, eval_dropout = eval_dropout)
 
           if (data_type == "tabular") {
             GAN_update_plot(

@@ -22,6 +22,7 @@ GANTrainer <-
            batch_size = 50,
            epochs = 150,
            plot = FALSE,
+           plot_every = "epoch",
            eval_dropout = FALSE,
            synthetic_examples = 500,
            plot_dimensions = c(1, 2),
@@ -51,6 +52,8 @@ GANTrainer <-
       steps <- length(data$imgs[[1]]) %/% batch_size
     }
 
+
+    plot_every <- ifelse(plot_every == "epoch", steps, plot_every)
 
     if (is.null(generator)) {
       g_net <-
@@ -156,9 +159,9 @@ GANTrainer <-
       # Here we will create a simple message to the console and a plot after each epoch. That is when i %% steps == 0.
 
 
-      if (i %% steps == 0) {
+      if (i %% plot_every == 0) {
         # Print the current epoch to the console.
-        cat("Epoch: ", i %/% steps, "\n")
+        cat("Update Step: ", i, "\n")
 
 
         if (plot) {

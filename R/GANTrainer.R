@@ -13,6 +13,7 @@ GANTrainer <-
            noise_dim = 2,
            noise_distribution = "normal",
            value_function = "original",
+           data_type = "tabular",
            generator = NULL,
            generator_optimizer = NULL,
            discriminator = NULL,
@@ -21,12 +22,34 @@ GANTrainer <-
            batch_size = 50,
            epochs = 150,
            plot = FALSE,
+           synthetic_examples = 500,
+           plot_dimensions = c(1, 2),
            device = "cpu") {
-    data_dim <- ncol(data)
 
-    if (!("torch_tensor" %in% class(data))) {
-      data <- torch::torch_tensor(data)$to(device = device)
+
+
+    ! (any(
+      c("dataset", "matrix", "array", "torch_tensor") %in% class(data)
+    ))
+
+    if (!(any(
+      c("dataset", "matrix", "array", "torch_tensor") %in% class(data)
+    ))) {
+      stop(
+        "Data needs to be in correct format. \ntorch::dataset, matrix, array or torch::torch_tensor are permitted."
+      )
     }
+
+    if ((any(c("array", "matrix") %in% class(data)))) {
+      data <- torch::torch_tensor(data)$to(device = "cpu")
+      data_dim <- ncol(data)
+      steps <- nrow(data) %/% batch_size
+    }
+
+    if("image_folder" %in% class(data)) {
+      steps <- length(data$imgs[[1]]) %/% batch_size
+    }
+
 
     if (is.null(generator)) {
       g_net <-
@@ -56,7 +79,7 @@ GANTrainer <-
       d_optim <- discriminator_optimizer
     }
 
-    steps <- nrow(data) %/% batch_size
+
 
     if (class(noise_distribution) == "function") {
       sample_noise <- noise_distribution
@@ -66,7 +89,7 @@ GANTrainer <-
       }
 
       if (noise_distribution == "uniform") {
-        sample_noise <- torch::torch_rand
+        sample_noise <- torch_rand_ab
       }
     }
 
@@ -74,63 +97,21 @@ GANTrainer <-
       value_fct <- value_function
     } else {
       if (is.null(value_function) | value_function == "original") {
-        value_fct <- function(real_scores, fake_scores) {
-          d_loss <-
-            torch::torch_log(real_scores) + torch::torch_log(1 - fake_scores)
-          d_loss <- -d_loss$mean()
-
-
-          g_loss <- torch::torch_log(1 - fake_scores)
-
-          g_loss <- g_loss$mean()
-
-          return(list(d_loss = d_loss,
-                      g_loss = g_loss))
-
-        }
+        value_fct <- GAN_value_fct
 
         weight_clipper <- function(d_net) {
+
         }
       }
 
       if (value_function == "wasserstein") {
-        value_fct <- function(real_scores, fake_scores) {
-          d_loss <-
-            torch::torch_mean(real_scores) - torch::torch_mean(fake_scores)
-          d_loss <- -d_loss$mean()
+        value_fct <- WGAN_value_fct
 
-
-          g_loss <- torch::torch_mean(fake_scores)
-
-          g_loss <- -g_loss$mean()
-
-          return(list(d_loss = d_loss,
-                      g_loss = g_loss))
-
-        }
-
-        weight_clipper <- function(d_net) {
-          for (parameter in names(d_net$parameters)) {
-            d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
-          }
-        }
+        weight_clipper <- WGAN_weight_clipper
 
       }
       if (value_function == "f-wgan") {
-        value_fct <- function(real_scores, fake_scores) {
-          d_loss <-
-            kl_real(real_scores) + kl_fake(fake_scores)
-          d_loss <- d_loss$mean()
-
-
-          g_loss <-  kl_gen(fake_scores)
-
-          g_loss <- g_loss$mean()
-
-          return(list(d_loss = d_loss,
-                      g_loss = g_loss))
-
-        }
+        value_fct <- FWGAN_value_fct
 
         weight_clipper <- function(d_net) {
 
@@ -147,22 +128,22 @@ GANTrainer <-
 
 
     fixed_z <-
-      sample_noise(c(nrow(data), noise_dim))$to(device = device)
+      sample_noise(c(synthetic_examples, noise_dim))$to(device = device)
 
     for (i in 1:(epochs * steps)) {
-
-
-      GAN_update_step(data,
-                      batch_size,
-                      noise_dim,
-                      sample_noise,
-                      device,
-                      g_net,
-                      d_net,
-                      g_optim,
-                      d_optim,
-                      value_fct,
-                      weight_clipper)
+      GAN_update_step(
+        data,
+        batch_size,
+        noise_dim,
+        sample_noise,
+        device,
+        g_net,
+        d_net,
+        g_optim,
+        d_optim,
+        value_fct,
+        weight_clipper
+      )
 
       # This concludes one update step of the GAN. We will now repeat this many times.
 
@@ -173,41 +154,29 @@ GANTrainer <-
       # During training we want to observe whether the GAN is learning anything useful.
       # Here we will create a simple message to the console and a plot after each epoch. That is when i %% steps == 0.
 
-      if (plot) {
-        if (i %% steps == 0) {
-          # Print the current epoch to the console.
-          cat("Epoch: ", i %/% steps, "\n")
 
+      if (i %% steps == 0) {
+        # Print the current epoch to the console.
+        cat("Epoch: ", i %/% steps, "\n")
+
+
+        if (plot) {
           # Create synthetic data for our plot. This synthetic data will always use the same noise sample -- fixed_z -- so it is easier for us to monitor training progress.
           synth_data <-
             sample_synthetic_data(g_net, fixed_z, device)
-          # Now we plot the training data.
-          plot(
-            train_samples[, 1:2],
-            bty = "n",
-            col = viridis::viridis(2, alpha = 0.7)[1],
-            #xlim = c(-50, 50),
-            pch = 19,
-            xlab = "Var 1",
-            ylab = "Var 2",
-            main = paste0("Epoch: ", i %/% steps),
-            las = 1
-          )
-          # And we add the synthetic data on top.
-          points(
-            synth_data[, 1:2],
-            bty = "n",
-            col = viridis::viridis(2, alpha = 0.7)[2],
-            pch = 19
-          )
-          # Finally a legend to understand the plot.
-          legend(
-            "topleft",
-            bty = "n",
-            pch = 19,
-            col = viridis::viridis(2),
-            legend = c("Real", "Synthetic")
-          )
+
+          if (data_type == "tabular") {
+            GAN_update_plot(
+              data = data,
+              dimensions = plot_dimensions,
+              synth_data = synth_data,
+              epoch = i %/% steps
+            )
+          }
+
+          if (data_type == "image") {
+            GAN_update_plot_image(synth_data = synth_data)
+          }
         }
       }
     }
@@ -362,15 +331,77 @@ GAN_update_step <-
 #' @return A function
 #' @export
 GAN_update_plot <-
-  function() {
-
+  function(data,
+           dimensions = c(1, 2),
+           synth_data,
+           epoch) {
+    # Now we plot the training data.
+    plot(
+      torch::as_array(data$cpu())[, dimensions],
+      bty = "n",
+      col = viridis::viridis(2, alpha = 0.7)[1],
+      #xlim = c(-50, 50),
+      pch = 19,
+      xlab = ifelse(
+        !is.null(colnames(data)),
+        colnames(data)[dimensions[1]],
+        paste0("Var ", dimensions[1])
+      ),
+      ylab = ifelse(
+        !is.null(colnames(data)),
+        colnames(data)[dimensions[2]],
+        paste0("Var ", dimensions[2])
+      ),
+      main = paste0("Epoch: ", epoch),
+      las = 1
+    )
+    # And we add the synthetic data on top.
+    points(
+      synth_data[, dimensions],
+      bty = "n",
+      col = viridis::viridis(2, alpha = 0.7)[2],
+      pch = 19
+    )
+    # Finally a legend to understand the plot.
+    legend(
+      "topleft",
+      bty = "n",
+      pch = 19,
+      col = viridis::viridis(2),
+      legend = c("Real", "Synthetic")
+    )
   }
 
 
-get_batch <- function(dataset, batch_size, device = "cpu") {
+#' @title GAN_update_plot_image
+#'
+#' @description Provides a function to send the output of a DataTransformer to
+#'   a torch tensor, so that it can be accessed during GAN training.
+#'
+#' @param transformed_data Input a data set after DataTransformer
+#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#'
+#' @return A function
+#' @export
+GAN_update_plot_image <-
+  function(mfrow = c(4, 4),
+           synth_data) {
 
-  if("dataloader" %in% class(dataset)){
-    torch::dataloader_next(torch::dataloader_make_iter(dataset))$x
+    synth_data <- (synth_data + 1) / 2
+    synth_data <- aperm(synth_data, c(1,3,4,2))
+    par(mfrow = mfrow, mar = c(0, 0, 0, 0), oma = c(0, 0, 0, 0))
+    lapply(lapply(lapply(1:(dim(synth_data)[1]), function(x) synth_data[x,,,]), as.raster), plot)
+
+  }
+
+get_batch <- function(dataset, batch_size, device = "cpu") {
+  if ("dataset" %in% class(dataset)) {
+    dataloader <-
+      torch::dataloader(dataset,
+                        batch_size,
+                        shuffle = TRUE,
+                        num_workers = 0)
+    torch::dataloader_next(torch::dataloader_make_iter(dataloader))$x$to(device = device)
   } else {
     dataset[sample(nrow(dataset), size = batch_size)]$to(device = device)
   }

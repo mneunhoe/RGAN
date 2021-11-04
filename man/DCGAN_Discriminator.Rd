@@ -8,7 +8,8 @@ DCGAN_Discriminator(
   image_size = 64,
   number_channels = 3,
   ndf = 64,
-  dropout_rate = 0.5
+  dropout_rate = 0.5,
+  sigmoid = FALSE
 )
 }
 \value{

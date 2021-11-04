@@ -9,6 +9,7 @@ GANTrainer(
   noise_dim = 2,
   noise_distribution = "normal",
   value_function = "original",
+  data_type = "tabular",
   generator = NULL,
   generator_optimizer = NULL,
   discriminator = NULL,
@@ -17,6 +18,8 @@ GANTrainer(
   batch_size = 50,
   epochs = 150,
   plot = FALSE,
+  synthetic_examples = 500,
+  plot_dimensions = c(1, 2),
   device = "cpu"
 )
 }

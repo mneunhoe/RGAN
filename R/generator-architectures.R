@@ -98,7 +98,6 @@ DCGAN_Generator <- torch::nn_module(
                         # Initialize an empty nn_sequential module
                         self$seq <- torch::nn_sequential()
 
-                        # First, we add a ResidualBlock of the respective size.
                         self$seq$add_module(
                           module =  torch::nn_conv_transpose2d(noise_dim, ngf * 8, 4, 1, 0, bias = FALSE),
                           name = paste0("Conv", 1)

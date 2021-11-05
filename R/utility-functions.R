@@ -1,3 +1,7 @@
+torch_rand_ab <- function(shape, a = -1, b = 1, ...) {
+  (a-b) * torch::torch_rand(shape, ...) + b
+}
+
 # We will use the kl GAN loss
 # You can find the paper here: https://arxiv.org/abs/1910.09779
 # And the original python implementation here: https://github.com/ermongroup/f-wgan
@@ -30,7 +34,8 @@ kl_gen <- function(dis_fake) {
 
 get_kl_ratio <- function(v) {
   v_norm = torch::torch_logsumexp(v, dim=1) -
-torch::torch_log(torch::torch_tensor(v$size(1)))
-return(torch::torch_exp(v - v_norm))
+    torch::torch_log(torch::torch_tensor(v$size(1)))
+  return(torch::torch_exp(v - v_norm))
 }
+
 

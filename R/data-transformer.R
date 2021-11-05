@@ -1,4 +1,4 @@
-#' @title DataTransformer
+#' @title data_transformer
 #'
 #' @description Provides a class to transform data for RGAN.
 #'   Method `$new()` initializes a new transformer, method `$fit(data)` learns
@@ -12,8 +12,8 @@
 #'
 #' @return A class to transform data for RGAN
 #' @export
-DataTransformer <- R6::R6Class(
-  "DataTransformer",
+data_transformer <- R6::R6Class(
+  "data_transformer",
   lock_objects = FALSE,
   public = list(
     initialize = function() {

@@ -5,24 +5,26 @@
 \title{DCGAN Discriminator}
 \usage{
 DCGAN_Discriminator(
-  image_size = 64,
   number_channels = 3,
   ndf = 64,
   dropout_rate = 0.5,
   sigmoid = FALSE
 )
 }
+\arguments{
+\item{number_channels}{The number of channels in the image (RGB is 3 channels)}
+
+\item{ndf}{The number of feature maps in discriminator}
+
+\item{dropout_rate}{The dropout rate for each hidden layer}
+
+\item{sigmoid}{Switch between a sigmoid and linear output layer (the sigmoid is needed for the original GAN value function)}
+}
 \value{
-A neural net for the DCGAN Discriminator
+A torch::nn_module for the DCGAN Discriminator
 }
 \description{
-Provides a class to transform data for RGAN.
-Method \verb{$new()} initializes a new transformer, method \verb{$fit(data)} learns
-the parameters for the transformation from data (e.g. means and sds).
-Methods \verb{$transform()} and \verb{$inverse_transform()} can be used to transform
-and back transform a data set based on the learned parameters.
-Currently, DataTransformer supports z-transformation (a.k.a. normalization)
-for numerical features/variables and one hot encoding for categorical
-features/variables. In your call to fit you just need to indicate which
-columns contain discrete features.
+Provides a torch::nn_module with a simple deep convolutional neural
+net architecture, for use as the default architecture for image data in RGAN.
+Architecture inspired by: \url{https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html}
 }

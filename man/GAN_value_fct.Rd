@@ -2,19 +2,19 @@
 % Please edit documentation in R/value-functions.R
 \name{GAN_value_fct}
 \alias{GAN_value_fct}
-\title{GAN_value_fct}
+\title{GAN Value Function}
 \usage{
 GAN_value_fct(real_scores, fake_scores)
 }
 \arguments{
-\item{transformed_data}{Input a data set after DataTransformer}
+\item{real_scores}{The discriminator scores on real examples ($D(x)$)}
 
-\item{device}{Input on which device (e.g. "cpu" or "cuda") will you be training?}
+\item{fake_scores}{The discriminator scores on fake examples ($D(G(z))$)}
 }
 \value{
-A function
+The function returns a named list with the entries d_loss and g_loss
 }
 \description{
-Provides a function to send the output of a DataTransformer to
-a torch tensor, so that it can be accessed during GAN training.
+Implements the original GAN value function as a function to be called in gan_trainer.
+The function can serve as a template to implement new value functions in RGAN.
 }

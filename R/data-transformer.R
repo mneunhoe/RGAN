@@ -1,4 +1,4 @@
-#' @title data_transformer
+#' @title Data Transformer
 #'
 #' @description Provides a class to transform data for RGAN.
 #'   Method `$new()` initializes a new transformer, method `$fit(data)` learns
@@ -10,15 +10,18 @@
 #'   features/variables. In your call to fit you just need to indicate which
 #'   columns contain discrete features.
 #'
-#' @return A class to transform data for RGAN
+#' @return A class to transform (normalize or one hot encode) tabular data for RGAN
 #' @export
 data_transformer <- R6::R6Class(
   "data_transformer",
   lock_objects = FALSE,
   public = list(
+    #' @description
+    #' Create a new data_transformer object
     initialize = function() {
       NULL
     },
+
     fit_continuous = function(column = NULL, data = NULL) {
       data <- data[, 1]
       mean <- mean(data, na.rm = T)
@@ -51,6 +54,13 @@ data_transformer <- R6::R6Class(
       )
 
     },
+    #' @description
+    #' Fit a data_transformer to data.
+    #' @param data The data set to transform
+    #' @param discrete_columns Column ids for columns with discrete/nominal values to be one hot encoded.
+    #' @examples
+    #' transformer <- data_transformer
+    #' data_transformer$fit(data)
     fit = function(data, discrete_columns = NULL) {
       self$output_info <- list()
       self$output_dimensions <- 0
@@ -93,6 +103,13 @@ data_transformer <- R6::R6Class(
       colnames(oh_na) <- colnames(oh)
       return(oh_na)
     },
+    #' @description
+    #' Transform data using a fitted data_transformer. (From original format to transformed format.)
+    #' @param data The data set to transform
+    #' @examples
+    #' transformer <- data_transformer
+    #' data_transformer$fit(data)
+    #' transformed_data <- data_transformer$transform(data)
     transform = function(data) {
       values <- list()
       for(meta in self$meta) {
@@ -133,6 +150,14 @@ data_transformer <- R6::R6Class(
       column <- as.numeric(as.character(column))
       return(column)
     },
+    #' @description
+    #' Inverse Transform data using a fitted data_transformer. (From transformed format to original format.)
+    #' @param data The data set to transform
+    #' @examples
+    #' transformer <- data_transformer
+    #' data_transformer$fit(data)
+    #' transformed_data <- data_transformer$transform(data)
+    #' reconstructed_data <- data_transformer$inverse_transform(transformed_data)
     inverse_transform = function(data) {
       start <- 1
       output <- list()

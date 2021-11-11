@@ -1,16 +1,13 @@
-#' @title sample_synthetic_data
+#' @title Sample Synthetic Data
 #'
-#' @description Provides a class to transform data for RGAN.
-#'   Method `$new()` initializes a new transformer, method `$fit(data)` learns
-#'   the parameters for the transformation from data (e.g. means and sds).
-#'   Methods `$transform()` and `$inverse_transform()` can be used to transform
-#'   and back transform a data set based on the learned parameters.
-#'   Currently, DataTransformer supports z-transformation (a.k.a. normalization)
-#'   for numerical features/variables and one hot encoding for categorical
-#'   features/variables. In your call to fit you just need to indicate which
-#'   columns contain discrete features.
+#' @description Provides a function that makes it easy to sample synthetic data from a Generator
 #'
-#' @return Function to sample from Generator
+#' @param g_net A torch::nn_module with a Generator
+#' @param z A noise vector
+#' @param device The device on which synthetic data should be sampled (cpu or cuda)
+#' @param eval_dropout Should dropout be applied during inference
+#'
+#' @return Function to sample from Generator given a noise vector z
 #' @export
 sample_synthetic_data <-
   function(g_net,

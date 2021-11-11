@@ -1,30 +1,20 @@
 #' @title Generator
 #'
-#' @description Provides a class to transform data for RGAN.
-#'   Method `$new()` initializes a new transformer, method `$fit(data)` learns
-#'   the parameters for the transformation from data (e.g. means and sds).
-#'   Methods `$transform()` and `$inverse_transform()` can be used to transform
-#'   and back transform a data set based on the learned parameters.
-#'   Currently, DataTransformer supports z-transformation (a.k.a. normalization)
-#'   for numerical features/variables and one hot encoding for categorical
-#'   features/variables. In your call to fit you just need to indicate which
-#'   columns contain discrete features.
+#' @description Provides a torch::nn_module with a simple fully connected neural
+#'   net, for use as the default architecture for tabular data in RGAN.
 #'
-#' @param noise_dim a
-#' @param data_dim b
-#' @param hidden_units list of number of neurons per layer the length of the list determines the number of hidden layers
-#' @param dropout_rate dropout for each hidden layer
+#' @param noise_dim The length of the noise vector per example
+#' @param data_dim The number of columns in the data set
+#' @param hidden_units A list of the number of neurons per layer, the length of the list determines the number of hidden layers
+#' @param dropout_rate The dropout rate for each hidden layer
 #'
-#' @return A neural net class for the Generator
+#' @return A torch::nn_module for the Generator
 #' @export
 Generator <- torch::nn_module(
   initialize = function(noise_dim,
-                        # The length of our noise vector per example
                         data_dim,
-                        # The number of columns in our data
                         hidden_units = list(128, 128),
-                        # A list with the number of neurons per layer. If you add more elements to the list you create a deeper network.
-                        dropout_rate = 0.5 # The dropout probability
+                        dropout_rate = 0.5
                         ) {
                         # Initialize an empty nn_sequential module
                         self$seq <- torch::nn_sequential()
@@ -67,31 +57,20 @@ forward = function(input) {
 
 #' @title DCGAN Generator
 #'
-#' @description Provides a class to transform data for RGAN.
-#'   Method `$new()` initializes a new transformer, method `$fit(data)` learns
-#'   the parameters for the transformation from data (e.g. means and sds).
-#'   Methods `$transform()` and `$inverse_transform()` can be used to transform
-#'   and back transform a data set based on the learned parameters.
-#'   Currently, DataTransformer supports z-transformation (a.k.a. normalization)
-#'   for numerical features/variables and one hot encoding for categorical
-#'   features/variables. In your call to fit you just need to indicate which
-#'   columns contain discrete features.
-#'   Architecture from: https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
+#' @description Provides a torch::nn_module with a simple deep convolutional neural
+#'   net architecture, for use as the default architecture for image data in RGAN.
+#'   Architecture inspired by: [https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html](https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html)
 #'
-#' @param noise_dim a
-#' @param data_dim b
-#' @param hidden_units list of number of neurons per layer the length of the list determines the number of hidden layers
-#' @param dropout_rate dropout for each hidden layer
+#' @param noise_dim The length of the noise vector per example
+#' @param number_channels The number of channels in the image (RGB is 3 channels)
+#' @param ngf The number of feature maps in generator
+#' @param dropout_rate The dropout rate for each hidden layer
 #'
-#' @return A neural net class for the DCGAN Generator
+#' @return A torch::nn_module for the DCGAN Generator
 #' @export
 DCGAN_Generator <- torch::nn_module(
   initialize = function(noise_dim = 100,
-                        # The length of our noise vector per example
-                        image_size = 64,
-                        # The number of columns in our data
                         number_channels = 3,
-                        # Number of RGB channels
                         ngf = 64, # Number of feature maps in Generator
                         dropout_rate = 0.5
                         ) {

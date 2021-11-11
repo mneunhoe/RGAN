@@ -69,7 +69,7 @@ gan_trainer(
 \item{device}{Input on which device (e.g. "cpu" or "cuda") training should be done. Defaults to "cpu".}
 }
 \value{
-\code{gan_trainer} returns a list with the last generator, discriminator and the respective optimizers.
+gan_trainer trains the neural networks and returns a list with the last generator, discriminator and the respective optimizers.
 }
 \description{
 Provides a function to quickly train a GAN model.

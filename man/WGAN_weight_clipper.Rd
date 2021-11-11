@@ -2,19 +2,18 @@
 % Please edit documentation in R/value-functions.R
 \name{WGAN_weight_clipper}
 \alias{WGAN_weight_clipper}
-\title{WGAN_weight_clipper}
+\title{WGAN Weight Clipper}
 \usage{
-WGAN_weight_clipper(d_net)
+WGAN_weight_clipper(d_net, clip_values = c(-0.01, 0.01))
 }
 \arguments{
-\item{transformed_data}{Input a data set after DataTransformer}
+\item{d_net}{A torch::nn_module (typically a discriminator/critic) for which the weights should be clipped}
 
-\item{device}{Input on which device (e.g. "cpu" or "cuda") will you be training?}
+\item{clip_values}{A vector with the lower and upper bound for weight values. Any value outside this range will be set to the closer value.}
 }
 \value{
-A function
+The function modifies the torch::nn_module weights in place
 }
 \description{
-Provides a function to send the output of a DataTransformer to
-a torch tensor, so that it can be accessed during GAN training.
+A function that clips the weights of a Discriminator (for WGAN training).
 }

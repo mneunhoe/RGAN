@@ -23,7 +23,7 @@
 #' @param plot_dimensions If you monitor training progress with a plot which dimensions of the data do you want to look at? Defaults to c(1, 2), i.e. the first two columns of the tabular data.
 #' @param device Input on which device (e.g. "cpu" or "cuda") training should be done. Defaults to "cpu".
 #'
-#' @return `gan_trainer` returns a list with the last generator, discriminator and the respective optimizers.
+#' @return gan_trainer trains the neural networks and returns a list with the last generator, discriminator and the respective optimizers.
 #' @export
 gan_trainer <-
   function(data,
@@ -140,7 +140,7 @@ gan_trainer <-
 
       }
       if (value_function == "f-wgan") {
-        value_fct <- FWGAN_value_fct
+        value_fct <- KLWGAN_value_fct
 
         weight_clipper <- function(d_net) {
 

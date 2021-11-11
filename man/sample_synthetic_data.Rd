@@ -2,21 +2,22 @@
 % Please edit documentation in R/sample-synthetic-data.R
 \name{sample_synthetic_data}
 \alias{sample_synthetic_data}
-\title{sample_synthetic_data}
+\title{Sample Synthetic Data}
 \usage{
 sample_synthetic_data(g_net, z, device, eval_dropout = F)
 }
+\arguments{
+\item{g_net}{A torch::nn_module with a Generator}
+
+\item{z}{A noise vector}
+
+\item{device}{The device on which synthetic data should be sampled (cpu or cuda)}
+
+\item{eval_dropout}{Should dropout be applied during inference}
+}
 \value{
-Function to sample from Generator
+Function to sample from Generator given a noise vector z
 }
 \description{
-Provides a class to transform data for RGAN.
-Method \verb{$new()} initializes a new transformer, method \verb{$fit(data)} learns
-the parameters for the transformation from data (e.g. means and sds).
-Methods \verb{$transform()} and \verb{$inverse_transform()} can be used to transform
-and back transform a data set based on the learned parameters.
-Currently, DataTransformer supports z-transformation (a.k.a. normalization)
-for numerical features/variables and one hot encoding for categorical
-features/variables. In your call to fit you just need to indicate which
-columns contain discrete features.
+Provides a function that makes it easy to sample synthetic data from a Generator
 }

@@ -6,33 +6,25 @@
 \usage{
 DCGAN_Generator(
   noise_dim = 100,
-  image_size = 64,
   number_channels = 3,
   ngf = 64,
   dropout_rate = 0.5
 )
 }
 \arguments{
-\item{noise_dim}{a}
+\item{noise_dim}{The length of the noise vector per example}
 
-\item{dropout_rate}{dropout for each hidden layer}
+\item{number_channels}{The number of channels in the image (RGB is 3 channels)}
 
-\item{data_dim}{b}
+\item{ngf}{The number of feature maps in generator}
 
-\item{hidden_units}{list of number of neurons per layer the length of the list determines the number of hidden layers}
+\item{dropout_rate}{The dropout rate for each hidden layer}
 }
 \value{
-A neural net class for the DCGAN Generator
+A torch::nn_module for the DCGAN Generator
 }
 \description{
-Provides a class to transform data for RGAN.
-Method \verb{$new()} initializes a new transformer, method \verb{$fit(data)} learns
-the parameters for the transformation from data (e.g. means and sds).
-Methods \verb{$transform()} and \verb{$inverse_transform()} can be used to transform
-and back transform a data set based on the learned parameters.
-Currently, DataTransformer supports z-transformation (a.k.a. normalization)
-for numerical features/variables and one hot encoding for categorical
-features/variables. In your call to fit you just need to indicate which
-columns contain discrete features.
-Architecture from: https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
+Provides a torch::nn_module with a simple deep convolutional neural
+net architecture, for use as the default architecture for image data in RGAN.
+Architecture inspired by: \url{https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html}
 }

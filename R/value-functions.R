@@ -1,12 +1,12 @@
-#' @title GAN_value_fct
+#' @title GAN Value Function
 #'
-#' @description Provides a function to send the output of a DataTransformer to
-#'   a torch tensor, so that it can be accessed during GAN training.
+#' @description Implements the original GAN value function as a function to be called in gan_trainer.
+#'   The function can serve as a template to implement new value functions in RGAN.
 #'
-#' @param transformed_data Input a data set after DataTransformer
-#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#' @param real_scores The discriminator scores on real examples ($D(x)$)
+#' @param fake_scores The discriminator scores on fake examples ($D(G(z))$)
 #'
-#' @return A function
+#' @return The function returns a named list with the entries d_loss and g_loss
 #' @export
 GAN_value_fct <- function(real_scores, fake_scores) {
   d_loss <-
@@ -23,15 +23,15 @@ GAN_value_fct <- function(real_scores, fake_scores) {
 
 }
 
-#' @title WGAN_value_fct
+#' @title WGAN Value Function
 #'
-#' @description Provides a function to send the output of a DataTransformer to
-#'   a torch tensor, so that it can be accessed during GAN training.
+#' @description Implements the Wasserstein GAN (WGAN) value function as a function to be called in gan_trainer.
+#'   Note that for this to work properly you also need to implement a weight clipper (or other procedure) to constrain the Discriminator weights.
 #'
-#' @param transformed_data Input a data set after DataTransformer
-#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#' @param real_scores The discriminator scores on real examples ($D(x)$)
+#' @param fake_scores The discriminator scores on fake examples ($D(G(z))$)
 #'
-#' @return A function
+#' @return The function returns a named list with the entries d_loss and g_loss
 #' @export
 WGAN_value_fct <- function(real_scores, fake_scores) {
   d_loss <-
@@ -48,17 +48,17 @@ WGAN_value_fct <- function(real_scores, fake_scores) {
 
 }
 
-#' @title FWGAN_value_fct
+#' @title KLWGAN Value Function
 #'
 #' @description Provides a function to send the output of a DataTransformer to
 #'   a torch tensor, so that it can be accessed during GAN training.
 #'
-#' @param transformed_data Input a data set after DataTransformer
-#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#' @param real_scores The discriminator scores on real examples ($D(x)$)
+#' @param fake_scores The discriminator scores on fake examples ($D(G(z))$)
 #'
-#' @return A function
+#' @return The function returns a named list with the entries d_loss and g_loss
 #' @export
-FWGAN_value_fct <- function(real_scores, fake_scores) {
+KLWGAN_value_fct <- function(real_scores, fake_scores) {
   d_loss <-
     kl_real(real_scores) + kl_fake(fake_scores)
   d_loss <- d_loss$mean()
@@ -74,19 +74,17 @@ FWGAN_value_fct <- function(real_scores, fake_scores) {
 }
 
 
-
-#' @title WGAN_weight_clipper
+#' @title WGAN Weight Clipper
 #'
-#' @description Provides a function to send the output of a DataTransformer to
-#'   a torch tensor, so that it can be accessed during GAN training.
+#' @description A function that clips the weights of a Discriminator (for WGAN training).
 #'
-#' @param transformed_data Input a data set after DataTransformer
-#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#' @param d_net A torch::nn_module (typically a discriminator/critic) for which the weights should be clipped
+#' @param clip_values A vector with the lower and upper bound for weight values. Any value outside this range will be set to the closer value.
 #'
-#' @return A function
+#' @return The function modifies the torch::nn_module weights in place
 #' @export
-WGAN_weight_clipper <- function(d_net) {
+WGAN_weight_clipper <- function(d_net, clip_values = c(-0.01, 0.01)) {
   for (parameter in names(d_net$parameters)) {
-    d_net$parameters[[parameter]]$data()$clip_(-0.01, 0.01)
+    d_net$parameters[[parameter]]$data()$clip_(clip_values[1], clip_values[2])
   }
 }

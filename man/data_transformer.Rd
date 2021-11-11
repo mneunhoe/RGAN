@@ -2,9 +2,9 @@
 % Please edit documentation in R/data-transformer.R
 \name{data_transformer}
 \alias{data_transformer}
-\title{data_transformer}
+\title{Data Transformer}
 \value{
-A class to transform data for RGAN
+A class to transform (normalize or one hot encode) tabular data for RGAN
 }
 \description{
 Provides a class to transform data for RGAN.
@@ -16,6 +16,32 @@ Currently, DataTransformer supports z-transformation (a.k.a. normalization)
 for numerical features/variables and one hot encoding for categorical
 features/variables. In your call to fit you just need to indicate which
 columns contain discrete features.
+}
+\examples{
+
+## ------------------------------------------------
+## Method `data_transformer$fit`
+## ------------------------------------------------
+
+transformer <- data_transformer
+data_transformer$fit(data)
+
+## ------------------------------------------------
+## Method `data_transformer$transform`
+## ------------------------------------------------
+
+transformer <- data_transformer
+data_transformer$fit(data)
+transformed_data <- data_transformer$transform(data)
+
+## ------------------------------------------------
+## Method `data_transformer$inverse_transform`
+## ------------------------------------------------
+
+transformer <- data_transformer
+data_transformer$fit(data)
+transformed_data <- data_transformer$transform(data)
+reconstructed_data <- data_transformer$inverse_transform(transformed_data)
 }
 \section{Methods}{
 \subsection{Public methods}{
@@ -37,6 +63,7 @@ columns contain discrete features.
 \if{html}{\out{<a id="method-new"></a>}}
 \if{latex}{\out{\hypertarget{method-new}{}}}
 \subsection{Method \code{new()}}{
+Create a new data_transformer object
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$new()}\if{html}{\out{</div>}}
 }
@@ -64,8 +91,27 @@ columns contain discrete features.
 \if{html}{\out{<a id="method-fit"></a>}}
 \if{latex}{\out{\hypertarget{method-fit}{}}}
 \subsection{Method \code{fit()}}{
+Fit a data_transformer to data.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit(data, discrete_columns = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{data}}{The data set to transform}
+
+\item{\code{discrete_columns}}{Column ids for columns with discrete/nominal values to be one hot encoded.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Examples}{
+\if{html}{\out{<div class="r example copy">}}
+\preformatted{transformer <- data_transformer
+data_transformer$fit(data)
+}
+\if{html}{\out{</div>}}
+
 }
 
 }
@@ -91,8 +137,26 @@ columns contain discrete features.
 \if{html}{\out{<a id="method-transform"></a>}}
 \if{latex}{\out{\hypertarget{method-transform}{}}}
 \subsection{Method \code{transform()}}{
+Transform data using a fitted data_transformer. (From original format to transformed format.)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$transform(data)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{data}}{The data set to transform}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Examples}{
+\if{html}{\out{<div class="r example copy">}}
+\preformatted{transformer <- data_transformer
+data_transformer$fit(data)
+transformed_data <- data_transformer$transform(data)
+}
+\if{html}{\out{</div>}}
+
 }
 
 }
@@ -118,8 +182,27 @@ columns contain discrete features.
 \if{html}{\out{<a id="method-inverse_transform"></a>}}
 \if{latex}{\out{\hypertarget{method-inverse_transform}{}}}
 \subsection{Method \code{inverse_transform()}}{
+Inverse Transform data using a fitted data_transformer. (From transformed format to original format.)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$inverse_transform(data)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{data}}{The data set to transform}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Examples}{
+\if{html}{\out{<div class="r example copy">}}
+\preformatted{transformer <- data_transformer
+data_transformer$fit(data)
+transformed_data <- data_transformer$transform(data)
+reconstructed_data <- data_transformer$inverse_transform(transformed_data)
+}
+\if{html}{\out{</div>}}
+
 }
 
 }

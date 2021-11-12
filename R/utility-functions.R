@@ -12,6 +12,25 @@ torch_rand_ab <- function(shape, a = -1, b = 1, ...) {
   (a-b) * torch::torch_rand(shape, ...) + b
 }
 
+#' @title Sample Toydata
+#'
+#' @description Sample Toydata to reproduce the examples in the paper.
+#'
+#' @param n Number of observations to generate
+#' @param sd Standard deviation of the normal distribution to generate y
+#' @param seed A seed for the pseudo random number generator
+#'
+#' @return A matrix with two columns x and y
+#' @export
+sample_toydata <- function(n = 1000, sd = 0.3, seed = 20211111) {
+  set.seed(seed)
+  x <- c(rnorm(n))
+
+  y <- c(rnorm(n, x ^ 2, sd))
+
+  cbind(x, y)
+}
+
 #' @title KL WGAN loss on real examples
 #'
 #' @description Utility function for the kl WGAN loss for real examples as described in [https://arxiv.org/abs/1910.09779](https://arxiv.org/abs/1910.09779)

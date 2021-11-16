@@ -35,11 +35,11 @@ is properly installed:
 
 ``` r
 install.packages("torch")
-#> Installing package into '/private/var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T/Rtmp4eirf0/temp_libpath4baf203f602'
+#> Installing package into '/private/var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T/Rtmp4eirf0/temp_libpath4baf7786599b'
 #> (as 'lib' is unspecified)
 #> 
 #> The downloaded binary packages are in
-#>  /var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T//RtmpXpGBED/downloaded_packages
+#>  /var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T//Rtmpur6IKN/downloaded_packages
 library(torch)
 ```
 
@@ -93,7 +93,7 @@ res <-
   )
 ```
 
-<img src="man/figures/README-example-1.png" width="100%" />
+<img src="man/figures/README-RGAN-example-1.png" width="100%" />
 
 After training you can work with the resulting GAN to sample synthetic
 data, or potentially keep training for further steps.
@@ -122,7 +122,7 @@ synth_data_no_dropout <- sample_synthetic_data(res$generator, noise_vector,eval_
 GAN_update_plot(data = transformed_data, synth_data = synth_data_no_dropout, main = "Without dropout")
 ```
 
-<img src="man/figures/README-Sampling data-1.png" width="100%" />
+<img src="man/figures/README-sampling-data-1.png" width="100%" />
 
 If you want to continue training you can pass the generator,
 discriminator as well as the respective optimizers to gan_trainer like

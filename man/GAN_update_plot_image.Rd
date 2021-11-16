@@ -7,9 +7,9 @@
 GAN_update_plot_image(mfrow = c(4, 4), synth_data)
 }
 \arguments{
-\item{transformed_data}{Input a data set after DataTransformer}
+\item{mfrow}{The dimensions of the grid of images to be plotted}
 
-\item{device}{Input on which device (e.g. "cpu" or "cuda") will you be training?}
+\item{synth_data}{The synthetic data (images) to be plotted}
 }
 \value{
 A function

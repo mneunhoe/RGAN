@@ -12,6 +12,8 @@ torch_rand_ab(shape, a = -1, b = 1, ...)
 \item{a}{Lower bound of uniform distribution to sample from}
 
 \item{b}{Upper bound of uniform distribution to sample from}
+
+\item{...}{Potential additional arguments}
 }
 \value{
 A sample from the specified uniform distribution in a tensor with the specified shape

@@ -4,12 +4,18 @@
 \alias{GAN_update_plot}
 \title{GAN_update_plot}
 \usage{
-GAN_update_plot(data, dimensions = c(1, 2), synth_data, epoch)
+GAN_update_plot(data, dimensions = c(1, 2), synth_data, epoch, main = NULL)
 }
 \arguments{
-\item{transformed_data}{Input a data set after DataTransformer}
+\item{data}{Real data to be plotted}
 
-\item{device}{Input on which device (e.g. "cpu" or "cuda") will you be training?}
+\item{dimensions}{Which columns of the data should be plotted}
+
+\item{synth_data}{The synthetic data to be plotted}
+
+\item{epoch}{The epoch during training for the plot title}
+
+\item{main}{An optional plot title}
 }
 \value{
 A function

@@ -59,8 +59,9 @@ data_transformer <- R6::R6Class(
     #' @param data The data set to transform
     #' @param discrete_columns Column ids for columns with discrete/nominal values to be one hot encoded.
     #' @examples
-    #' transformer <- data_transformer
-    #' data_transformer$fit(data)
+    #' data <- sample_toydata()
+    #' transformer <- data_transformer$new()
+    #' transformer$fit(data)
     fit = function(data, discrete_columns = NULL) {
       self$output_info <- list()
       self$output_dimensions <- 0
@@ -107,9 +108,10 @@ data_transformer <- R6::R6Class(
     #' Transform data using a fitted data_transformer. (From original format to transformed format.)
     #' @param data The data set to transform
     #' @examples
-    #' transformer <- data_transformer
-    #' data_transformer$fit(data)
-    #' transformed_data <- data_transformer$transform(data)
+    #' data <- sample_toydata()
+    #' transformer <- data_transformer$new()
+    #' transformer$fit(data)
+    #' transformed_data <- transformer$transform(data)
     transform = function(data) {
       values <- list()
       for(meta in self$meta) {
@@ -154,10 +156,11 @@ data_transformer <- R6::R6Class(
     #' Inverse Transform data using a fitted data_transformer. (From transformed format to original format.)
     #' @param data The data set to transform
     #' @examples
-    #' transformer <- data_transformer
-    #' data_transformer$fit(data)
-    #' transformed_data <- data_transformer$transform(data)
-    #' reconstructed_data <- data_transformer$inverse_transform(transformed_data)
+    #' data <- sample_toydata()
+    #' transformer <- data_transformer$new()
+    #' transformer$fit(data)
+    #' transformed_data <- transformer$transform(data)
+    #' reconstructed_data <- transformer$inverse_transform(transformed_data)
     inverse_transform = function(data) {
       start <- 1
       output <- list()

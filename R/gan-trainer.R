@@ -220,8 +220,17 @@ gan_trainer <-
 #' @description Provides a function to send the output of a DataTransformer to
 #'   a torch tensor, so that it can be accessed during GAN training.
 #'
-#' @param transformed_data Input a data set after DataTransformer
-#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#' @param data Input a data set. Needs to be a matrix, array, torch::torch_tensor or torch::dataset.
+#' @param batch_size The number of training samples selected into the mini batch for training. Defaults to 50.
+#' @param noise_dim The dimensions of the GAN noise vector z. Defaults to 2.
+#' @param sample_noise A function to sample noise to a torch::tensor
+#' @param device Input on which device (e.g. "cpu" or "cuda") training should be done. Defaults to "cpu".
+#' @param g_net The generator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.
+#' @param g_optim The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr)`.
+#' @param d_net The discriminator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.
+#' @param d_optim The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr * ttur_factor)`.
+#' @param value_function The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".
+#' @param weight_clipper The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.
 #'
 #' @return A function
 #' @export
@@ -290,8 +299,11 @@ gan_update_step <-
 #' @description Provides a function to send the output of a DataTransformer to
 #'   a torch tensor, so that it can be accessed during GAN training.
 #'
-#' @param transformed_data Input a data set after DataTransformer
-#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#' @param data Real data to be plotted
+#' @param dimensions Which columns of the data should be plotted
+#' @param synth_data The synthetic data to be plotted
+#' @param epoch The epoch during training for the plot title
+#' @param main An optional plot title
 #'
 #' @return A function
 #' @export
@@ -326,14 +338,14 @@ GAN_update_plot <-
       las = 1
     )
     # And we add the synthetic data on top.
-    points(
+    graphics::points(
       synth_data[, dimensions],
       bty = "n",
       col = viridis::viridis(2, alpha = 0.7)[2],
       pch = 19
     )
     # Finally a legend to understand the plot.
-    legend(
+    graphics::legend(
       "topleft",
       bty = "n",
       pch = 19,
@@ -348,8 +360,8 @@ GAN_update_plot <-
 #' @description Provides a function to send the output of a DataTransformer to
 #'   a torch tensor, so that it can be accessed during GAN training.
 #'
-#' @param transformed_data Input a data set after DataTransformer
-#' @param device Input on which device (e.g. "cpu" or "cuda") will you be training?
+#' @param mfrow The dimensions of the grid of images to be plotted
+#' @param synth_data The synthetic data (images) to be plotted
 #'
 #' @return A function
 #' @export
@@ -359,8 +371,8 @@ GAN_update_plot_image <-
 
     synth_data <- (synth_data + 1) / 2
     synth_data <- aperm(synth_data, c(1,3,4,2))
-    par(mfrow = mfrow, mar = c(0, 0, 0, 0), oma = c(0, 0, 0, 0))
-    lapply(lapply(lapply(1:(dim(synth_data)[1]), function(x) synth_data[x,,,]), as.raster), plot)
+    graphics::par(mfrow = mfrow, mar = c(0, 0, 0, 0), oma = c(0, 0, 0, 0))
+    lapply(lapply(lapply(1:(dim(synth_data)[1]), function(x) synth_data[x,,,]), grDevices::as.raster), plot)
 
   }
 

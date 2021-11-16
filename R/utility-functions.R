@@ -5,6 +5,7 @@
 #' @param shape Vector of dimensions of resulting tensor
 #' @param a Lower bound of uniform distribution to sample from
 #' @param b Upper bound of uniform distribution to sample from
+#' @param ... Potential additional arguments
 #'
 #' @return A sample from the specified uniform distribution in a tensor with the specified shape
 #' @export
@@ -24,9 +25,9 @@ torch_rand_ab <- function(shape, a = -1, b = 1, ...) {
 #' @export
 sample_toydata <- function(n = 1000, sd = 0.3, seed = 20211111) {
   set.seed(seed)
-  x <- c(rnorm(n))
+  x <- c(stats::rnorm(n))
 
-  y <- c(rnorm(n, x ^ 2, sd))
+  y <- c(stats::rnorm(n, x ^ 2, sd))
 
   cbind(x, y)
 }

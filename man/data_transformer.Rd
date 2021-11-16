@@ -23,25 +23,28 @@ columns contain discrete features.
 ## Method `data_transformer$fit`
 ## ------------------------------------------------
 
-transformer <- data_transformer
-data_transformer$fit(data)
+data <- sample_toydata()
+transformer <- data_transformer$new()
+transformer$fit(data)
 
 ## ------------------------------------------------
 ## Method `data_transformer$transform`
 ## ------------------------------------------------
 
-transformer <- data_transformer
-data_transformer$fit(data)
-transformed_data <- data_transformer$transform(data)
+data <- sample_toydata()
+transformer <- data_transformer$new()
+transformer$fit(data)
+transformed_data <- transformer$transform(data)
 
 ## ------------------------------------------------
 ## Method `data_transformer$inverse_transform`
 ## ------------------------------------------------
 
-transformer <- data_transformer
-data_transformer$fit(data)
-transformed_data <- data_transformer$transform(data)
-reconstructed_data <- data_transformer$inverse_transform(transformed_data)
+data <- sample_toydata()
+transformer <- data_transformer$new()
+transformer$fit(data)
+transformed_data <- transformer$transform(data)
+reconstructed_data <- transformer$inverse_transform(transformed_data)
 }
 \section{Methods}{
 \subsection{Public methods}{
@@ -107,8 +110,9 @@ Fit a data_transformer to data.
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{transformer <- data_transformer
-data_transformer$fit(data)
+\preformatted{data <- sample_toydata()
+transformer <- data_transformer$new()
+transformer$fit(data)
 }
 \if{html}{\out{</div>}}
 
@@ -151,9 +155,10 @@ Transform data using a fitted data_transformer. (From original format to transfo
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{transformer <- data_transformer
-data_transformer$fit(data)
-transformed_data <- data_transformer$transform(data)
+\preformatted{data <- sample_toydata()
+transformer <- data_transformer$new()
+transformer$fit(data)
+transformed_data <- transformer$transform(data)
 }
 \if{html}{\out{</div>}}
 
@@ -196,10 +201,11 @@ Inverse Transform data using a fitted data_transformer. (From transformed format
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{transformer <- data_transformer
-data_transformer$fit(data)
-transformed_data <- data_transformer$transform(data)
-reconstructed_data <- data_transformer$inverse_transform(transformed_data)
+\preformatted{data <- sample_toydata()
+transformer <- data_transformer$new()
+transformer$fit(data)
+transformed_data <- transformer$transform(data)
+reconstructed_data <- transformer$inverse_transform(transformed_data)
 }
 \if{html}{\out{</div>}}
 

@@ -17,7 +17,7 @@ rejection_sample <-
            epsilon = 1e-6,
            shift_percent = 0.95,
            score_max = NULL,
-           random = runif,
+           random = stats::runif,
            ...) {
     # Rejection scheme from:
     # https://arxiv.org/pdf/1810.06758.pdf
@@ -42,7 +42,7 @@ rejection_sample <-
     Fct <- D_delta - log(1 - exp(D_delta - epsilon))
 
     if (!is.null(shift_percent)) {
-      gamma <- quantile(Fct, shift_percent)
+      gamma <- stats::quantile(Fct, shift_percent)
     }
     Fct <- Fct - gamma
 
@@ -84,7 +84,7 @@ post_gan_boosting <-
       phi <- rep(1 / nrow(B), nrow(B))
     } else {
       # Initialize phi to a random distribution over B
-      phi_unnormalized <- runif(nrow(B))
+      phi_unnormalized <- stats::runif(nrow(B))
       # Normalize to get a valid probability distribution
       phi <- phi_unnormalized / sum(phi_unnormalized)
     }

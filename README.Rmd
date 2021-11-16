@@ -49,7 +49,7 @@ library(torch)
 
 Then you can get started to train a GAN on toy data (or potentially your own data).
 
-```{r example}
+```{r RGAN-example}
 library(RGAN)
 
 # Sample some toy data to play with.
@@ -101,7 +101,7 @@ After training you can work with the resulting GAN to sample synthetic data, or 
 
 If you want to sample synthetic data from your GAN you need to provide a GAN Generator and a noise vector (that needs to be a torch tensor and should come from the same distribution that you used during training). For example, we could look at the difference of synthetic data generated with and without dropout during generation/inference (using the same noise vector).
 
-```{r Sampling data}
+```{r sampling-data}
 par(mfrow = c(1, 2))
 
 # Set the noise vector.

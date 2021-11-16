@@ -19,9 +19,27 @@ gan_update_step(
 )
 }
 \arguments{
-\item{device}{Input on which device (e.g. "cpu" or "cuda") will you be training?}
+\item{data}{Input a data set. Needs to be a matrix, array, torch::torch_tensor or torch::dataset.}
 
-\item{transformed_data}{Input a data set after DataTransformer}
+\item{batch_size}{The number of training samples selected into the mini batch for training. Defaults to 50.}
+
+\item{noise_dim}{The dimensions of the GAN noise vector z. Defaults to 2.}
+
+\item{sample_noise}{A function to sample noise to a torch::tensor}
+
+\item{device}{Input on which device (e.g. "cpu" or "cuda") training should be done. Defaults to "cpu".}
+
+\item{g_net}{The generator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.}
+
+\item{d_net}{The discriminator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.}
+
+\item{g_optim}{The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup \code{torch::optim_adam(g_net$parameters, lr = base_lr)}.}
+
+\item{d_optim}{The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup \code{torch::optim_adam(g_net$parameters, lr = base_lr * ttur_factor)}.}
+
+\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".}
+
+\item{weight_clipper}{The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.}
 }
 \value{
 A function

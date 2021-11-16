@@ -299,10 +299,15 @@ GAN_update_plot <-
   function(data,
            dimensions = c(1, 2),
            synth_data,
-           epoch) {
+           epoch,
+           main = NULL) {
+
+    if("torch_tensor" %in% class(data)) {
+      data <- torch::as_array(data$cpu())
+    }
     # Now we plot the training data.
     plot(
-      torch::as_array(data$cpu())[, dimensions],
+      data[, dimensions],
       bty = "n",
       col = viridis::viridis(2, alpha = 0.7)[1],
       #xlim = c(-50, 50),
@@ -317,7 +322,7 @@ GAN_update_plot <-
         colnames(data)[dimensions[2]],
         paste0("Var ", dimensions[2])
       ),
-      main = paste0("Epoch: ", epoch),
+      main = ifelse(is.null(main), paste0("Epoch: ", epoch), main),
       las = 1
     )
     # And we add the synthetic data on top.

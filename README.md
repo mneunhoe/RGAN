@@ -6,7 +6,8 @@
 <!-- badges: start -->
 <!-- badges: end -->
 
-The goal of RGAN is to …
+The goal of RGAN is to facilitate training and experimentation with
+Generative Adversarial Nets (GAN) in R.
 
 ## Installation
 
@@ -26,36 +27,113 @@ devtools::install_github("mneunhoe/RGAN")
 
 ## Example
 
-This is a basic example which shows you how to solve a common problem:
+This is a basic example which shows you how to train a GAN and observe
+training progress on toy data.
+
+Before running RGAN for the first time you need to make sure that torch
+is properly installed:
+
+``` r
+install.packages("torch")
+#> Installing package into '/private/var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T/Rtmp4eirf0/temp_libpath4baf203f602'
+#> (as 'lib' is unspecified)
+#> 
+#> The downloaded binary packages are in
+#>  /var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T//RtmpXpGBED/downloaded_packages
+library(torch)
+```
+
+Then you can get started to train a GAN on toy data (or potentially your
+own data).
 
 ``` r
 library(RGAN)
-## basic example code
+
+# Sample some toy data to play with.
+data <- sample_toydata()
+
+# Transform (here standardize) the data to facilitate learning.
+# First, create a new data transformer.
+transformer <- data_transformer$new()
+
+# Fit the transformer to your data.
+transformer$fit(data)
+
+# Use the fitted transformer to transform your data.
+transformed_data <- transformer$transform(data)
+
+# Have a look at the transformed data.
+par(mfrow = c(3, 2))
+plot(
+  transformed_data,
+  bty = "n",
+  col = viridis::viridis(2, alpha = 0.7)[1],
+  pch = 19,
+  xlab = "Var 1",
+  ylab = "Var 2",
+  main = "The Real Data",
+  las = 1
+)
+
+# Set the device you want to train on.
+# First, we check whether a compatible GPU is available for computation.
+use_cuda <- torch::cuda_is_available()
+
+# If so we would use it to speed up training (especially for models with image data).
+device <- ifelse(use_cuda, "cuda", "cpu")
+
+# Now train the GAN and observe some intermediate results.
+res <-
+  gan_trainer(
+    transformed_data,
+    eval_dropout = TRUE,
+    plot_progress = TRUE,
+    plot_interval = 600,
+    device = device
+  )
 ```
 
-What is special about using `README.Rmd` instead of just `README.md`?
-You can include R chunks like so:
+<img src="man/figures/README-example-1.png" width="100%" />
+
+After training you can work with the resulting GAN to sample synthetic
+data, or potentially keep training for further steps.
+
+If you want to sample synthetic data from your GAN you need to provide a
+GAN Generator and a noise vector (that needs to be a torch tensor and
+should come from the same distribution that you used during training).
+For example, we could look at the difference of synthetic data generated
+with and without dropout during generation/inference (using the same
+noise vector).
 
 ``` r
-summary(cars)
-#>      speed           dist       
-#>  Min.   : 4.0   Min.   :  2.00  
-#>  1st Qu.:12.0   1st Qu.: 26.00  
-#>  Median :15.0   Median : 36.00  
-#>  Mean   :15.4   Mean   : 42.98  
-#>  3rd Qu.:19.0   3rd Qu.: 56.00  
-#>  Max.   :25.0   Max.   :120.00
+par(mfrow = c(1, 2))
+
+# Set the noise vector.
+noise_vector <- torch::torch_randn(c(nrow(transformed_data), 2))$to(device = device)
+
+# Generate synthetic data from the trained generator with dropout during generation.
+synth_data_dropout <- sample_synthetic_data(res$generator, noise_vector,eval_dropout = TRUE)
+
+# Plot data and synthetic data
+GAN_update_plot(data = transformed_data, synth_data = synth_data_dropout, main = "With dropout")
+
+synth_data_no_dropout <- sample_synthetic_data(res$generator, noise_vector,eval_dropout = F)
+
+GAN_update_plot(data = transformed_data, synth_data = synth_data_no_dropout, main = "Without dropout")
 ```
 
-You’ll still need to render `README.Rmd` regularly, to keep `README.md`
-up-to-date. `devtools::build_readme()` is handy for this. You could also
-use GitHub Actions to re-render `README.Rmd` every time you push. An
-example workflow can be found here:
-<https://github.com/r-lib/actions/tree/master/examples>.
+<img src="man/figures/README-Sampling data-1.png" width="100%" />
 
-You can also embed plots, for example:
+If you want to continue training you can pass the generator,
+discriminator as well as the respective optimizers to gan_trainer like
+that:
 
-<img src="man/figures/README-pressure-1.png" width="100%" />
-
-In that case, don’t forget to commit and push the resulting figure
-files, so they display on GitHub and CRAN.
+``` r
+res_cont <- gan_trainer(transformed_data,
+                   generator = res$generator,
+                   discriminator = res$discriminator,
+                   generator_optimizer = res$generator_optimizer,
+                   discriminator_optimizer = res$discriminator_optimizer,
+                   epochs = 10
+                   )
+```

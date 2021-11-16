@@ -7,10 +7,12 @@ Authors@R:
            role = c("aut", "cre"),
            email = "marcel.neunhoeffer@stat.uni-muenchen.de",
            comment = c(ORCID = "0000-0002-9137-5785"))
-Description: The package makes it easy to get started with Generative Adversarial Nets in R.
+Description: An easy way to get started with Generative Adversarial Nets in R.
 License: MIT + file LICENSE
+URL: https://github.com/mneunhoe/RGAN
+BugReports: https://github.com/mneunhoe/RGAN/issues
 Encoding: UTF-8
-LazyData: true
+LazyData: false
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.1
 Imports: 

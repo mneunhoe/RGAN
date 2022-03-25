@@ -4,7 +4,7 @@
 \alias{sample_synthetic_data}
 \title{Sample Synthetic Data}
 \usage{
-sample_synthetic_data(g_net, z, device, eval_dropout = F)
+sample_synthetic_data(g_net, z, device, eval_dropout = FALSE)
 }
 \arguments{
 \item{g_net}{A torch::nn_module with a Generator}

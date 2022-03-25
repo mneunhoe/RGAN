@@ -21,7 +21,8 @@ BugReports: https://github.com/mneunhoe/RGAN/issues
 Encoding: UTF-8
 LazyData: false
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.1.1
+RoxygenNote: 7.1.2
 Imports: 
+    cli,
     torch,
     viridis

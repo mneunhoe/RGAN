@@ -160,10 +160,7 @@ gan_trainer <-
       sample_noise(c(synthetic_examples, noise_dim))$to(device = device)
 
 # Initialize progress bar ------------------------------------------------------
-    pb <- progress::progress_bar$new(
-      format = "  Training the GAN [:bar] :percent eta: :eta",
-      total = epochs * steps, clear = F, width= 60)
-
+    cli::cli_progress_bar("Training the GAN", total = epochs * steps)
 # Start GAN training loop ------------------------------------------------------
     for (i in 1:(epochs * steps)) {
       gan_update_step(
@@ -180,7 +177,7 @@ gan_trainer <-
         weight_clipper
       )
 
-      pb$tick()
+      cli::cli_progress_update()
 
         if (plot_progress & i %% plot_interval == 0) {
 # Create synthetic data for our plot.
@@ -371,6 +368,8 @@ GAN_update_plot_image <-
 
     synth_data <- (synth_data + 1) / 2
     synth_data <- aperm(synth_data, c(1,3,4,2))
+    oldpar <- graphics::par(no.readonly = TRUE)
+    on.exit(graphics::par(oldpar))
     graphics::par(mfrow = mfrow, mar = c(0, 0, 0, 0), oma = c(0, 0, 0, 0))
     lapply(lapply(lapply(1:(dim(synth_data)[1]), function(x) synth_data[x,,,]), grDevices::as.raster), plot)
 

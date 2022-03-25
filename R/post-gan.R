@@ -69,10 +69,10 @@ post_gan_boosting <-
            real_N,
            steps = 400,
            N_generators = 200,
-           uniform_init = T,
-           dp = F,
+           uniform_init = TRUE,
+           dp = FALSE,
            MW_epsilon = 0.1,
-           weighted_average = F,
+           weighted_average = FALSE,
            averaging_window = NULL) {
 
     # Initialize phi (the distribution over the generated examples B).

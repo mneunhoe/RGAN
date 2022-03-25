@@ -13,7 +13,7 @@ sample_synthetic_data <-
   function(g_net,
            z,
            device,
-           eval_dropout = F) {
+           eval_dropout = FALSE) {
     # Pass the noise through the Generator to create fake data
 
     if (eval_dropout) {

@@ -18,6 +18,9 @@ features/variables. In your call to fit you just need to indicate which
 columns contain discrete features.
 }
 \examples{
+\dontrun{
+# Before running the first time the torch backend needs to be installed
+torch::install_torch()
 # Load data
 data <- sample_toydata()
 # Build new transformer
@@ -34,6 +37,7 @@ synthetic_data <- sample_synthetic_data(trained_gan, transformer)
 GAN_update_plot(data = data,
 synth_data = synthetic_data,
 main = "Real and Synthetic Data after Training")
+}
 
 ## ------------------------------------------------
 ## Method `data_transformer$fit`

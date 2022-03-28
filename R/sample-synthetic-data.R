@@ -39,6 +39,9 @@ expert_sample_synthetic_data <-
 #' @return Function to sample from a
 #' @export
 #' @examples
+#' \dontrun{
+#' # Before running the first time the torch backend needs to be installed
+#' torch::install_torch()
 #' # Load data
 #' data <- sample_toydata()
 #' # Build new transformer
@@ -55,6 +58,7 @@ expert_sample_synthetic_data <-
 #' GAN_update_plot(data = data,
 #' synth_data = synthetic_data,
 #' main = "Real and Synthetic Data after Training")
+#' }
 sample_synthetic_data <-
   function(trained_gan, transformer = NULL) {
     z <- trained_gan$settings$sample_noise(c(

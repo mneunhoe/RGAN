@@ -24,6 +24,9 @@ torch_rand_ab <- function(shape, a = -1, b = 1, ...) {
 #' @return A matrix with two columns x and y
 #' @export
 #' @examples
+#' \dontrun{
+#' # Before running the first time the torch backend needs to be installed
+#' torch::install_torch()
 #' # Load data
 #' data <- sample_toydata()
 #' # Build new transformer
@@ -40,6 +43,7 @@ torch_rand_ab <- function(shape, a = -1, b = 1, ...) {
 #' GAN_update_plot(data = data,
 #' synth_data = synthetic_data,
 #' main = "Real and Synthetic Data after Training")
+#' }
 sample_toydata <- function(n = 1000, sd = 0.3, seed = 20211111) {
   set.seed(seed)
   x <- c(stats::rnorm(n))

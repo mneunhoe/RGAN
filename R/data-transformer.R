@@ -13,6 +13,9 @@
 #' @return A class to transform (normalize or one hot encode) tabular data for RGAN
 #' @export
 #' @examples
+#' \dontrun{
+#' # Before running the first time the torch backend needs to be installed
+#' torch::install_torch()
 #' # Load data
 #' data <- sample_toydata()
 #' # Build new transformer
@@ -29,6 +32,7 @@
 #' GAN_update_plot(data = data,
 #' synth_data = synthetic_data,
 #' main = "Real and Synthetic Data after Training")
+#' }
 data_transformer <- R6::R6Class(
   "data_transformer",
   lock_objects = FALSE,

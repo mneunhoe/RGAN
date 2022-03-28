@@ -8,7 +8,28 @@ This is a resubmission. In this version I have:
 
 
 ## R CMD check results
-There were no ERRORs or WARNINGs or NOTEs
+There were no ERRORs or WARNINGs. 
+
+2 NOTEs:
+  
+* Possibly misspelled words in DESCRIPTION:
+    GAN (2:37, 10:75, 10:90, 11:136, 12:19, 14:14, 16:18, 17:43)
+    GANs (14:46)
+    al (11:32)
+    et (11:29)
+    Goodfellow (11:18)
+    optimizers (15:102)
+    
+GAN and GANs are common abbreviations of Generative Adversarial Network(s).
+et al. is a common abbreviation for multiple authors on a paper.
+Goodfellow is a name.
+optimizers is the American English spelling.
+
+
+* Found the following files/directories:
+    'lastMiKTeXException'
+
+
 
 
 

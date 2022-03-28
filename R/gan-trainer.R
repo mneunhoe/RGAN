@@ -27,6 +27,9 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' # Before running the first time the torch backend needs to be installed
+#' torch::install_torch()
 #' # Load data
 #' data <- sample_toydata()
 #' # Build new transformer
@@ -43,6 +46,7 @@
 #' GAN_update_plot(data = data,
 #' synth_data = synthetic_data,
 #' main = "Real and Synthetic Data after Training")
+#' }
 gan_trainer <-
   function(data,
            noise_dim = 2,
@@ -127,7 +131,7 @@ gan_trainer <-
 
 
 # Define the noise distribution for the generator ------------------------------
-    if (class(noise_distribution) == "function") {
+    if (inherits(noise_distribution, "function")) {
       sample_noise <- noise_distribution
     } else {
       if (noise_distribution == "normal") {
@@ -140,7 +144,7 @@ gan_trainer <-
     }
 
 # Define the value function ----------------------------------------------------
-    if (class(value_function) == "function") {
+    if (inherits(value_function, "function")) {
       value_fct <- value_function
     } else {
       if (is.null(value_function) | value_function == "original") {
@@ -341,6 +345,9 @@ gan_update_step <-
 #' @return A function
 #' @export
 #' @examples
+#' \dontrun{
+#' # Before running the first time the torch backend needs to be installed
+#' torch::install_torch()
 #' # Load data
 #' data <- sample_toydata()
 #' # Build new transformer
@@ -357,6 +364,7 @@ gan_update_step <-
 #' GAN_update_plot(data = data,
 #' synth_data = synthetic_data,
 #' main = "Real and Synthetic Data after Training")
+#' }
 GAN_update_plot <-
   function(data,
            dimensions = c(1, 2),

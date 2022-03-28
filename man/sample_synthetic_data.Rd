@@ -2,22 +2,36 @@
 % Please edit documentation in R/sample-synthetic-data.R
 \name{sample_synthetic_data}
 \alias{sample_synthetic_data}
-\title{Sample Synthetic Data}
+\title{Sample Synthetic Data from a trained RGAN}
 \usage{
-sample_synthetic_data(g_net, z, device, eval_dropout = FALSE)
+sample_synthetic_data(trained_gan, transformer = NULL)
 }
 \arguments{
-\item{g_net}{A torch::nn_module with a Generator}
+\item{trained_gan}{A trained RGAN object of class "trained_RGAN"}
 
-\item{z}{A noise vector}
-
-\item{device}{The device on which synthetic data should be sampled (cpu or cuda)}
-
-\item{eval_dropout}{Should dropout be applied during inference}
+\item{transformer}{The transformer object used to pre-process the data}
 }
 \value{
-Function to sample from Generator given a noise vector z
+Function to sample from a
 }
 \description{
 Provides a function that makes it easy to sample synthetic data from a Generator
+}
+\examples{
+# Load data
+data <- sample_toydata()
+# Build new transformer
+transformer <- data_transformer$new()
+# Fit transformer to data
+transformer$fit(data)
+# Transform data and store as new object
+transformed_data <-  transformer$transform(data)
+# Train the default GAN
+trained_gan <- gan_trainer(transformed_data)
+# Sample synthetic data from the trained GAN
+synthetic_data <- sample_synthetic_data(trained_gan, transformer)
+# Plot the results
+GAN_update_plot(data = data,
+synth_data = synthetic_data,
+main = "Real and Synthetic Data after Training")
 }

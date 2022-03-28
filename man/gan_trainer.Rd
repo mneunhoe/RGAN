@@ -69,8 +69,26 @@ gan_trainer(
 \item{device}{Input on which device (e.g. "cpu" or "cuda") training should be done. Defaults to "cpu".}
 }
 \value{
-gan_trainer trains the neural networks and returns a list with the last generator, discriminator and the respective optimizers.
+gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 }
 \description{
 Provides a function to quickly train a GAN model.
+}
+\examples{
+# Load data
+data <- sample_toydata()
+# Build new transformer
+transformer <- data_transformer$new()
+# Fit transformer to data
+transformer$fit(data)
+# Transform data and store as new object
+transformed_data <-  transformer$transform(data)
+# Train the default GAN
+trained_gan <- gan_trainer(transformed_data)
+# Sample synthetic data from the trained GAN
+synthetic_data <- sample_synthetic_data(trained_gan, transformer)
+# Plot the results
+GAN_update_plot(data = data,
+synth_data = synthetic_data,
+main = "Real and Synthetic Data after Training")
 }

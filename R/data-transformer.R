@@ -12,6 +12,23 @@
 #'
 #' @return A class to transform (normalize or one hot encode) tabular data for RGAN
 #' @export
+#' @examples
+#' # Load data
+#' data <- sample_toydata()
+#' # Build new transformer
+#' transformer <- data_transformer$new()
+#' # Fit transformer to data
+#' transformer$fit(data)
+#' # Transform data and store as new object
+#' transformed_data <-  transformer$transform(data)
+#' # Train the default GAN
+#' trained_gan <- gan_trainer(transformed_data)
+#' # Sample synthetic data from the trained GAN
+#' synthetic_data <- sample_synthetic_data(trained_gan, transformer)
+#' # Plot the results
+#' GAN_update_plot(data = data,
+#' synth_data = synthetic_data,
+#' main = "Real and Synthetic Data after Training")
 data_transformer <- R6::R6Class(
   "data_transformer",
   lock_objects = FALSE,

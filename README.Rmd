@@ -108,12 +108,12 @@ par(mfrow = c(1, 2))
 noise_vector <- torch::torch_randn(c(nrow(transformed_data), 2))$to(device = device)
 
 # Generate synthetic data from the trained generator with dropout during generation.
-synth_data_dropout <- sample_synthetic_data(res$generator, noise_vector,eval_dropout = TRUE)
+synth_data_dropout <- expert_sample_synthetic_data(res$generator, noise_vector,eval_dropout = TRUE)
 
 # Plot data and synthetic data
 GAN_update_plot(data = transformed_data, synth_data = synth_data_dropout, main = "With dropout")
 
-synth_data_no_dropout <- sample_synthetic_data(res$generator, noise_vector,eval_dropout = F)
+synth_data_no_dropout <- expert_sample_synthetic_data(res$generator, noise_vector,eval_dropout = F)
 
 GAN_update_plot(data = transformed_data, synth_data = synth_data_no_dropout, main = "Without dropout")
 

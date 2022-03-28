@@ -23,8 +23,26 @@
 #' @param plot_dimensions If you monitor training progress with a plot which dimensions of the data do you want to look at? Defaults to c(1, 2), i.e. the first two columns of the tabular data.
 #' @param device Input on which device (e.g. "cpu" or "cuda") training should be done. Defaults to "cpu".
 #'
-#' @return gan_trainer trains the neural networks and returns a list with the last generator, discriminator and the respective optimizers.
+#' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
+#'
+#' @examples
+#' # Load data
+#' data <- sample_toydata()
+#' # Build new transformer
+#' transformer <- data_transformer$new()
+#' # Fit transformer to data
+#' transformer$fit(data)
+#' # Transform data and store as new object
+#' transformed_data <-  transformer$transform(data)
+#' # Train the default GAN
+#' trained_gan <- gan_trainer(transformed_data)
+#' # Sample synthetic data from the trained GAN
+#' synthetic_data <- sample_synthetic_data(trained_gan, transformer)
+#' # Plot the results
+#' GAN_update_plot(data = data,
+#' synth_data = synthetic_data,
+#' main = "Real and Synthetic Data after Training")
 gan_trainer <-
   function(data,
            noise_dim = 2,
@@ -182,7 +200,7 @@ gan_trainer <-
         if (plot_progress & i %% plot_interval == 0) {
 # Create synthetic data for our plot.
           synth_data <-
-            sample_synthetic_data(g_net, fixed_z, device, eval_dropout = eval_dropout)
+            expert_sample_synthetic_data(g_net, fixed_z, device, eval_dropout = eval_dropout)
 
           if (data_type == "tabular") {
             GAN_update_plot(
@@ -200,13 +218,31 @@ gan_trainer <-
 
     }
 
+    output <-  list(
+      generator = g_net,
+      discriminator = d_net,
+      generator_optimizer = g_optim,
+      discriminator_optimizer = d_optim,
+      settings = list(noise_dim = noise_dim,
+                      noise_distribution = noise_distribution,
+                      sample_noise = sample_noise,
+                      value_function = value_function,
+                      data_type = data_type,
+                      base_lr = base_lr,
+                      ttur_factor = ttur_factor,
+                      weight_clipper = weight_clipper,
+                      batch_size = batch_size,
+                      epochs = epochs,
+                      plot_progress = plot_progress,
+                      plot_interval = plot_interval,
+                      eval_dropout = eval_dropout,
+                      synthetic_examples = synthetic_examples,
+                      plot_dimensions = plot_dimensions,
+                      device = device)
+    )
+    class(output) <- "trained_RGAN"
     return(
-      list(
-        generator = g_net,
-        discriminator = d_net,
-        generator_optimizer = g_optim,
-        discriminator_optimizer = d_optim
-      )
+     output
     )
 
   }
@@ -304,6 +340,23 @@ gan_update_step <-
 #'
 #' @return A function
 #' @export
+#' @examples
+#' # Load data
+#' data <- sample_toydata()
+#' # Build new transformer
+#' transformer <- data_transformer$new()
+#' # Fit transformer to data
+#' transformer$fit(data)
+#' # Transform data and store as new object
+#' transformed_data <-  transformer$transform(data)
+#' # Train the default GAN
+#' trained_gan <- gan_trainer(transformed_data)
+#' # Sample synthetic data from the trained GAN
+#' synthetic_data <- sample_synthetic_data(trained_gan, transformer)
+#' # Plot the results
+#' GAN_update_plot(data = data,
+#' synth_data = synthetic_data,
+#' main = "Real and Synthetic Data after Training")
 GAN_update_plot <-
   function(data,
            dimensions = c(1, 2),

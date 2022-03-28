@@ -35,11 +35,11 @@ is properly installed:
 
 ``` r
 install.packages("torch")
-#> Installing package into '/private/var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T/Rtmp4eirf0/temp_libpath4baf7786599b'
+#> Installing package into '/private/var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T/RtmppUYncE/temp_libpath7cc3448fcda2'
 #> (as 'lib' is unspecified)
 #> 
 #> The downloaded binary packages are in
-#>  /var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T//Rtmpur6IKN/downloaded_packages
+#>  /var/folders/z8/wk0vgp996m74v0g_x797qzf00000gn/T//Rtmpa6rd9N/downloaded_packages
 library(torch)
 ```
 
@@ -91,6 +91,27 @@ res <-
     plot_interval = 600,
     device = device
   )
+#> Training the GAN ■■                                 3% | ETA:  1m
+#> Training the GAN ■■                                 5% | ETA:  1m
+#> Training the GAN ■■■■                              10% | ETA:  1m
+#> Training the GAN ■■■■■■                            16% | ETA: 48s
+#> Training the GAN ■■■■■■■                           21% | ETA: 45s
+#> Training the GAN ■■■■■■■■■                         26% | ETA: 42s
+#> Training the GAN ■■■■■■■■■■                        32% | ETA: 39s
+#> Training the GAN ■■■■■■■■■■■■                      37% | ETA: 36s
+#> Training the GAN ■■■■■■■■■■■■■■                    42% | ETA: 32s
+#> Training the GAN ■■■■■■■■■■■■■■■                   48% | ETA: 30s
+#> Training the GAN ■■■■■■■■■■■■■■■■■                 53% | ETA: 27s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■                58% | ETA: 24s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■              63% | ETA: 21s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■             68% | ETA: 19s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■           73% | ETA: 16s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■          78% | ETA: 13s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■■■        83% | ETA: 10s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■■■■       88% | ETA:  7s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■     93% | ETA:  4s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■    98% | ETA:  1s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■  100% | ETA:  0s
 ```
 
 <img src="man/figures/README-RGAN-example-1.png" width="100%" />
@@ -112,12 +133,12 @@ par(mfrow = c(1, 2))
 noise_vector <- torch::torch_randn(c(nrow(transformed_data), 2))$to(device = device)
 
 # Generate synthetic data from the trained generator with dropout during generation.
-synth_data_dropout <- sample_synthetic_data(res$generator, noise_vector,eval_dropout = TRUE)
+synth_data_dropout <- expert_sample_synthetic_data(res$generator, noise_vector,eval_dropout = TRUE)
 
 # Plot data and synthetic data
 GAN_update_plot(data = transformed_data, synth_data = synth_data_dropout, main = "With dropout")
 
-synth_data_no_dropout <- sample_synthetic_data(res$generator, noise_vector,eval_dropout = F)
+synth_data_no_dropout <- expert_sample_synthetic_data(res$generator, noise_vector,eval_dropout = F)
 
 GAN_update_plot(data = transformed_data, synth_data = synth_data_no_dropout, main = "Without dropout")
 ```
@@ -136,4 +157,6 @@ res_cont <- gan_trainer(transformed_data,
                    discriminator_optimizer = res$discriminator_optimizer,
                    epochs = 10
                    )
+#> Training the GAN ■■■■■■■■■■■■■■■■                  50% | ETA:  2s
+#> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■  100% | ETA:  0s
 ```

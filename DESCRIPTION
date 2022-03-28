@@ -5,7 +5,7 @@ Authors@R:
     person(given = "Marcel",
            family = "Neunhoeffer",
            role = c("aut", "cre"),
-           email = "marcel.neunhoeffer@stat.uni-muenchen.de",
+           email = "marcel.neunhoeffer@gmail.com",
            comment = c(ORCID = "0000-0002-9137-5785"))
 Description: An easy way to get started with Generative Adversarial Nets (GAN) in R. The GAN algorithm was initially 
     described by Goodfellow et al. 2014 <https://proceedings.neurips.cc/paper/2014/file/5ca3e9b122f61f8f06494c97b1afccf3-Paper.pdf>. A GAN can be used to learn the joint distribution of complex data by 

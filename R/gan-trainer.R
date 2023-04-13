@@ -67,6 +67,8 @@ gan_trainer <-
            eval_dropout = FALSE,
            synthetic_examples = 500,
            plot_dimensions = c(1, 2),
+           track_loss = FALSE,
+           plot_loss = FALSE,
            device = "cpu") {
 # Check if data is in the correct format ---------------------------------------
     !(any(
@@ -183,9 +185,15 @@ gan_trainer <-
 
 # Initialize progress bar ------------------------------------------------------
     cli::cli_progress_bar("Training the GAN", total = epochs * steps)
+
+
+    losses <- NULL
+
+
 # Start GAN training loop ------------------------------------------------------
     for (i in 1:(epochs * steps)) {
-      gan_update_step(
+
+      step_loss <- gan_update_step(
         data,
         batch_size,
         noise_dim,
@@ -196,8 +204,17 @@ gan_trainer <-
         g_optim,
         d_optim,
         value_fct,
-        weight_clipper
+        weight_clipper,
+        track_loss
       )
+
+      if(track_loss & length(losses) == 0){
+        losses <- step_loss
+      }
+      if(track_loss & length(losses) > 0){
+        losses$g_loss <- c(losses$g_loss, step_loss$g_loss)
+        losses$d_loss <- c(losses$d_loss, step_loss$d_loss)
+      }
 
       cli::cli_progress_update()
 
@@ -227,6 +244,7 @@ gan_trainer <-
       discriminator = d_net,
       generator_optimizer = g_optim,
       discriminator_optimizer = d_optim,
+      losses = losses,
       settings = list(noise_dim = noise_dim,
                       noise_distribution = noise_distribution,
                       sample_noise = sample_noise,
@@ -282,7 +300,8 @@ gan_update_step <-
            g_optim,
            d_optim,
            value_function,
-           weight_clipper) {
+           weight_clipper,
+           track_loss = FALSE) {
     # Get a fresh batch of data ------------------------------------------------
     real_data <- get_batch(data, batch_size, device)
 
@@ -328,6 +347,16 @@ gan_update_step <-
 
     # Take one step of the optimizer
     g_optim$step()
+
+    if(track_loss){
+
+      return(list(
+        g_loss = torch::as_array(g_loss$detach()$cpu()),
+        d_loss = torch::as_array(d_loss$detach()$cpu())
+      ))
+
+
+    }
   }
 
 

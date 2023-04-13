@@ -26,3 +26,7 @@ Imports:
     cli,
     torch,
     viridis
+Suggests: 
+    rmarkdown,
+    knitr
+VignetteBuilder: knitr

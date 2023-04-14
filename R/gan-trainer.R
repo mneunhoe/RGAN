@@ -21,7 +21,9 @@
 #' @param eval_dropout Should dropout be applied during the sampling of synthetic data? Defaults to FALSE.
 #' @param synthetic_examples Number of synthetic examples that should be generated. Defaults to 500. For image data e.g. 16 would be more reasonable.
 #' @param plot_dimensions If you monitor training progress with a plot which dimensions of the data do you want to look at? Defaults to c(1, 2), i.e. the first two columns of the tabular data.
-#' @param device Input on which device (e.g. "cpu" or "cuda") training should be done. Defaults to "cpu".
+#' @param track_loss Store the training losses as additional output. Defaults to FALSE.
+#' @param plot_loss Monitor the losses during training with plots. Defaults to FALSE.
+#' @param device Input on which device (e.g. "cpu", "cuda", or "mps") training should be done. Defaults to "cpu".
 #'
 #' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
@@ -286,7 +288,7 @@ gan_trainer <-
 #' @param d_optim The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr * ttur_factor)`.
 #' @param value_function The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".
 #' @param weight_clipper The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.
-#'
+#' @param track_loss Store the training losses as additional output. Defaults to FALSE.
 #' @return A function
 #' @export
 gan_update_step <-

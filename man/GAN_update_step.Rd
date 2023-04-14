@@ -15,7 +15,8 @@ gan_update_step(
   g_optim,
   d_optim,
   value_function,
-  weight_clipper
+  weight_clipper,
+  track_loss = FALSE
 )
 }
 \arguments{
@@ -40,6 +41,8 @@ gan_update_step(
 \item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".}
 
 \item{weight_clipper}{The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.}
+
+\item{track_loss}{Store the training losses as additional output. Defaults to FALSE.}
 }
 \value{
 A function

@@ -7,7 +7,7 @@
 <!-- badges: end -->
 
 The goal of RGAN is to facilitate training and experimentation with
-Generative Adversarial Nets (GAN) in R.
+Generative Adversarial Nets (GAN) in R. 
 
 ## Installation
 

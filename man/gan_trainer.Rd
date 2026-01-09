@@ -42,7 +42,9 @@ gan_trainer(
   generator_normalization = "batch",
   generator_activation = "relu",
   generator_init = "xavier_uniform",
-  generator_residual = TRUE
+  generator_residual = TRUE,
+  checkpoint_epochs = NULL,
+  checkpoint_path = NULL
 )
 }
 \arguments{
@@ -134,6 +136,14 @@ list(256, 256) as used in CTGAN. Only used when output_info is provided.}
 
 \item{generator_residual}{Enable residual connections in TabularGenerator. Defaults to TRUE.
 Only used when output_info is provided.}
+
+\item{checkpoint_epochs}{Interval for saving model checkpoints (in epochs). If NULL (default),
+no checkpoints are saved. For example, checkpoint_epochs = 10 saves checkpoints at epochs
+10, 20, 30, etc. Checkpoints enable post-GAN boosting for improved sample quality.}
+
+\item{checkpoint_path}{Optional path for disk-based checkpoint persistence. If NULL (default),
+checkpoints are stored in memory only. If provided, checkpoints are saved to disk, enabling
+post-GAN boosting for large training runs with many checkpoints.}
 }
 \value{
 gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.

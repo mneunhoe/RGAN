@@ -53,6 +53,12 @@
 #'   "xavier_normal", "kaiming_uniform", or "kaiming_normal". Only used when output_info is provided.
 #' @param generator_residual Enable residual connections in TabularGenerator. Defaults to TRUE.
 #'   Only used when output_info is provided.
+#' @param checkpoint_epochs Interval for saving model checkpoints (in epochs). If NULL (default),
+#'   no checkpoints are saved. For example, checkpoint_epochs = 10 saves checkpoints at epochs
+#'   10, 20, 30, etc. Checkpoints enable post-GAN boosting for improved sample quality.
+#' @param checkpoint_path Optional path for disk-based checkpoint persistence. If NULL (default),
+#'   checkpoints are stored in memory only. If provided, checkpoints are saved to disk, enabling
+#'   post-GAN boosting for large training runs with many checkpoints.
 #'
 #' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
@@ -116,7 +122,9 @@ gan_trainer <-
            generator_normalization = "batch",
            generator_activation = "relu",
            generator_init = "xavier_uniform",
-           generator_residual = TRUE) {
+           generator_residual = TRUE,
+           checkpoint_epochs = NULL,
+           checkpoint_path = NULL) {
 # Set random seeds for reproducibility -----------------------------------------
     if (!is.null(seed)) {
       set.seed(seed)
@@ -175,6 +183,17 @@ gan_trainer <-
           stop(sprintf("output_info type must be one of: %s", paste(valid_types, collapse = ", ")))
         }
       }
+    }
+
+    # Validate checkpoint parameters
+    if (!is.null(checkpoint_epochs)) {
+      if (!is.numeric(checkpoint_epochs) || checkpoint_epochs <= 0 ||
+          checkpoint_epochs != as.integer(checkpoint_epochs)) {
+        stop("checkpoint_epochs must be a positive integer")
+      }
+    }
+    if (!is.null(checkpoint_path) && is.null(checkpoint_epochs)) {
+      warning("checkpoint_path provided but checkpoint_epochs is NULL. No checkpoints will be saved.")
     }
 
     # Validate device availability
@@ -258,6 +277,21 @@ gan_trainer <-
     best_generator_state <- NULL
     best_discriminator_state <- NULL
     validation_metrics <- list()
+
+# Initialize checkpoint storage ------------------------------------------------
+    checkpoints <- NULL
+    if (!is.null(checkpoint_epochs)) {
+      checkpoints <- list(
+        epochs = integer(0),
+        discriminators = list(),
+        generators = list(),
+        on_disk = !is.null(checkpoint_path)
+      )
+      # Create checkpoint directory if needed
+      if (!is.null(checkpoint_path) && !dir.exists(checkpoint_path)) {
+        dir.create(checkpoint_path, recursive = TRUE)
+      }
+    }
 
 # Set the plotting interval ----------------------------------------------------
     plot_interval <- ifelse(plot_interval == "epoch", steps, plot_interval)
@@ -556,6 +590,27 @@ gan_trainer <-
               lr_schedule, lr_decay_factor, lr_decay_steps
             )
           }
+
+          # Save checkpoints at specified intervals
+          if (!is.null(checkpoint_epochs) && current_epoch %% checkpoint_epochs == 0) {
+            if (!is.null(checkpoint_path)) {
+              # Disk-based storage
+              d_path <- file.path(checkpoint_path, sprintf("discriminator_epoch_%04d.pt", current_epoch))
+              g_path <- file.path(checkpoint_path, sprintf("generator_epoch_%04d.pt", current_epoch))
+              torch::torch_save(d_net$state_dict(), d_path)
+              torch::torch_save(g_net$state_dict(), g_path)
+              checkpoints$epochs <- c(checkpoints$epochs, current_epoch)
+              checkpoints$discriminators[[length(checkpoints$discriminators) + 1]] <- d_path
+              checkpoints$generators[[length(checkpoints$generators) + 1]] <- g_path
+            } else {
+              # In-memory storage (clone to avoid reference issues)
+              checkpoints$epochs <- c(checkpoints$epochs, current_epoch)
+              d_state <- lapply(d_net$state_dict(), function(x) x$clone())
+              g_state <- lapply(g_net$state_dict(), function(x) x$clone())
+              checkpoints$discriminators[[length(checkpoints$discriminators) + 1]] <- d_state
+              checkpoints$generators[[length(checkpoints$generators) + 1]] <- g_state
+            }
+          }
         }
 
     }
@@ -567,6 +622,7 @@ gan_trainer <-
       discriminator_optimizer = d_optim,
       losses = losses,
       validation_metrics = if (length(validation_metrics) > 0) validation_metrics else NULL,
+      checkpoints = checkpoints,
       settings = list(noise_dim = noise_dim,
                       noise_distribution = noise_distribution,
                       sample_noise = sample_noise,
@@ -596,7 +652,9 @@ gan_trainer <-
                       generator_normalization = generator_normalization,
                       generator_activation = generator_activation,
                       generator_init = generator_init,
-                      generator_residual = generator_residual)
+                      generator_residual = generator_residual,
+                      checkpoint_epochs = checkpoint_epochs,
+                      checkpoint_path = checkpoint_path)
     )
     class(output) <- "trained_RGAN"
     return(

@@ -46,7 +46,6 @@ device <- if (cuda_is_available()) {
   "cpu"
 }
 
-device <- "cpu"
 cat("Using device:", device, "\n")
 ```
 

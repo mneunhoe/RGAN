@@ -1,0 +1,458 @@
+---
+title: "Training a State-of-the-Art GAN on the Adult Dataset"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Training a State-of-the-Art GAN on the Adult Dataset}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+This vignette demonstrates how to train a state-of-the-art Generative Adversarial Network
+(GAN) for tabular data synthesis using RGAN. We use the UCI Adult dataset as an example,
+showcasing all the modern techniques available in the package:
+
+- **Mode-specific normalization** for handling multi-modal continuous distributions
+- **Gumbel-Softmax** for differentiable categorical sampling
+- **Self-attention layers** for capturing feature relationships
+- **Residual connections** for better gradient flow
+- **WGAN-GP** for stable training
+- **PacGAN** for reducing mode collapse
+- **Learning rate scheduling** for improved convergence
+- **Early stopping** with validation data
+
+## Setup
+
+```{r setup}
+library(RGAN)
+library(torch)
+
+# Set seed for reproducibility
+set.seed(42)
+
+# Check for GPU availability
+device <- if (cuda_is_available()) {
+  "cuda"
+} else if (torch::backends_mps_is_available()) {
+ "mps"
+} else {
+  "cpu"
+}
+cat("Using device:", device, "\n")
+```
+
+## Loading and Preparing the Adult Dataset
+
+The Adult dataset (also known as the Census Income dataset) contains demographic
+information used to predict whether income exceeds $50K/year. It has a mix of
+continuous and categorical variables, making it an ideal benchmark for tabular GANs.
+
+```{r load-data}
+# Load the Adult dataset
+# You can download it from UCI ML Repository or use a package like mlbench
+# Here we'll create a sample with similar structure for demonstration
+
+# If you have the actual Adult dataset:
+# adult <- read.csv("adult.data", header = FALSE)
+
+# For this example, we'll simulate Adult-like data
+n_samples <- 5000
+
+# Create Adult-like dataset with mixed types
+adult <- data.frame(
+  # Continuous variables
+  age = round(rnorm(n_samples, mean = 38, sd = 13)),
+  education_num = round(pmax(1, pmin(16, rnorm(n_samples, mean = 10, sd = 2.5)))),
+  capital_gain = ifelse(runif(n_samples) > 0.9,
+                        rexp(n_samples, rate = 0.0001), 0),
+  capital_loss = ifelse(runif(n_samples) > 0.95,
+                        rexp(n_samples, rate = 0.001), 0),
+  hours_per_week = round(pmax(1, pmin(99, rnorm(n_samples, mean = 40, sd = 12)))),
+
+  # Categorical variables
+  workclass = sample(c("Private", "Self-emp", "Gov", "Other"),
+                     n_samples, replace = TRUE,
+                     prob = c(0.7, 0.1, 0.15, 0.05)),
+  education = sample(c("HS-grad", "Some-college", "Bachelors", "Masters", "Other"),
+                     n_samples, replace = TRUE,
+                     prob = c(0.3, 0.25, 0.2, 0.1, 0.15)),
+  marital_status = sample(c("Married", "Never-married", "Divorced", "Other"),
+                          n_samples, replace = TRUE,
+                          prob = c(0.45, 0.35, 0.15, 0.05)),
+  occupation = sample(c("Prof-specialty", "Craft-repair", "Exec-managerial",
+                        "Adm-clerical", "Sales", "Other"),
+                      n_samples, replace = TRUE),
+  relationship = sample(c("Husband", "Not-in-family", "Own-child",
+                          "Unmarried", "Wife", "Other"),
+                        n_samples, replace = TRUE),
+  race = sample(c("White", "Black", "Asian-Pac-Islander", "Other"),
+                n_samples, replace = TRUE,
+                prob = c(0.85, 0.1, 0.03, 0.02)),
+  sex = sample(c("Male", "Female"), n_samples, replace = TRUE, prob = c(0.67, 0.33)),
+  income = sample(c("<=50K", ">50K"), n_samples, replace = TRUE, prob = c(0.76, 0.24))
+)
+
+# Ensure age is positive
+adult$age <- pmax(17, pmin(90, adult$age))
+
+head(adult)
+str(adult)
+```
+
+## Data Transformation with Mode-Specific Normalization
+
+For tabular data with mixed types, proper preprocessing is crucial. RGAN's
+`data_transformer` handles this automatically:
+
+- **Continuous columns**: Mode-specific normalization using Gaussian Mixture Models (GMM)
+  captures multi-modal distributions (e.g., capital_gain has a spike at 0)
+- **Categorical columns**: One-hot encoding with Gumbel-Softmax for differentiable sampling
+
+```{r transform-data}
+# Create and fit the data transformer
+transformer <- data_transformer$new()
+
+# Fit with mode-specific normalization for continuous columns
+# n_modes controls the number of GMM components (more modes = more expressive)
+transformer$fit(
+  adult,
+  discrete_columns = c("workclass", "education", "marital_status",
+                       "occupation", "relationship", "race", "sex", "income"),
+  mode_specific = TRUE,  # Enable mode-specific normalization
+  n_modes = 10           # Number of GMM components per continuous column
+)
+
+# Transform the data
+transformed_data <- transformer$transform(adult)
+
+cat("Original data shape:", dim(adult), "\n")
+cat("Transformed data shape:", dim(transformed_data), "\n")
+cat("Output info structure:\n")
+print(transformer$output_info)
+```
+
+The `output_info` structure tells the generator how to process each output block:
+- `"linear"`: Continuous values with tanh activation
+- `"mode_specific"`: Mode probabilities (softmax) + normalized value (tanh)
+- `"softmax"`: Categorical one-hot encoding with Gumbel-Softmax
+
+## Splitting Data for Validation
+
+Early stopping requires validation data to monitor training progress:
+
+```{r split-data}
+# Split into training and validation sets (90/10)
+n_train <- floor(0.9 * nrow(transformed_data))
+train_idx <- sample(1:nrow(transformed_data), n_train)
+
+train_data <- transformed_data[train_idx, ]
+val_data <- transformed_data[-train_idx, ]
+
+cat("Training samples:", nrow(train_data), "\n")
+cat("Validation samples:", nrow(val_data), "\n")
+```
+
+## Training Configuration
+
+Now we configure the GAN with state-of-the-art settings:
+
+```{r train-gan}
+# Train the GAN with all SOTA features
+trained_gan <- gan_trainer(
+  data = train_data,
+
+  # === Noise Configuration ===
+  noise_dim = 128,                    # Latent dimension (128 is common for tabular)
+  noise_distribution = "normal",      # Standard normal noise
+
+  # === Value Function ===
+  value_function = "wgan-gp",         # Wasserstein GAN with gradient penalty
+  gp_lambda = 10,                     # Gradient penalty coefficient
+
+  # === Generator Architecture (TabularGenerator) ===
+  output_info = transformer$output_info,  # Enable Gumbel-Softmax
+  gumbel_tau = 0.2,                   # Temperature (lower = more discrete)
+  generator_hidden_units = list(256, 256, 256),  # 3 hidden layers
+  generator_normalization = "batch",   # Batch normalization (CTGAN default)
+  generator_activation = "relu",       # ReLU activation
+  generator_init = "xavier_uniform",   # Xavier initialization
+  generator_residual = TRUE,           # Enable residual connections
+
+  # === Training Parameters ===
+  batch_size = 500,                   # Batch size
+  epochs = 300,                       # Maximum epochs
+  base_lr = 2e-4,                     # Base learning rate
+  ttur_factor = 1,                    # Two time-scale update rule factor
+
+  # === PacGAN for Mode Collapse Prevention ===
+  pac = 10,                           # Pack 10 samples together
+
+  # === Learning Rate Schedule ===
+  lr_schedule = "cosine",             # Cosine annealing
+
+  # === Early Stopping ===
+  validation_data = val_data,
+  early_stopping = TRUE,
+  patience = 30,                      # Stop if no improvement for 30 epochs
+
+  # === Monitoring ===
+  track_loss = TRUE,                  # Track losses for plotting
+  plot_progress = FALSE,              # Set TRUE for interactive monitoring
+
+  # === Device and Reproducibility ===
+  device = device,
+  seed = 42
+)
+
+# Print training summary
+print(trained_gan)
+```
+
+### Understanding the Configuration
+
+**WGAN-GP**: Uses the Wasserstein distance with gradient penalty instead of the
+original GAN loss. This provides more stable training and meaningful loss values.
+
+**Gumbel-Softmax**: Enables gradient flow through categorical variables by using
+a continuous relaxation of the categorical distribution. The temperature parameter
+`gumbel_tau` controls how "soft" the samples are (lower = more discrete).
+
+**Residual Connections**: Skip connections between layers of the same width improve
+gradient flow in deeper networks.
+
+**PacGAN**: The discriminator sees packs of `pac` samples concatenated together,
+helping it detect lack of diversity and reducing mode collapse.
+
+**Cosine Annealing**: Learning rate decreases following a cosine curve from
+`base_lr` to 0 over the training epochs.
+
+## Monitoring Training Progress
+
+If you enabled `track_loss = TRUE`, you can visualize the training:
+
+```{r plot-losses}
+# Plot training losses
+if (!is.null(trained_gan$loss_history)) {
+  plot_losses(trained_gan, smooth = 0.9)
+}
+```
+
+## Generating Synthetic Data
+
+Once trained, generate synthetic samples:
+
+```{r generate-synthetic}
+# Generate synthetic data
+n_synthetic <- 1000
+synthetic_data <- sample_synthetic_data(
+  trained_gan,
+  transformer,
+  n = n_synthetic
+)
+
+cat("Synthetic data shape:", dim(synthetic_data), "\n")
+head(synthetic_data)
+```
+
+## Evaluating Synthetic Data Quality
+
+### Visual Comparison
+
+```{r visual-comparison, fig.width=10, fig.height=8}
+# Compare distributions of continuous variables
+par(mfrow = c(2, 3))
+
+continuous_cols <- c("age", "education_num", "capital_gain",
+                     "capital_loss", "hours_per_week")
+
+for (col in continuous_cols) {
+  # Get real and synthetic values
+  real_vals <- adult[[col]]
+  synth_vals <- synthetic_data[[col]]
+
+  # Plot histograms
+  hist(real_vals, col = rgb(0.2, 0.4, 0.6, 0.5),
+       main = col, xlab = col,
+       breaks = 30, freq = FALSE)
+  hist(synth_vals, col = rgb(0.8, 0.2, 0.2, 0.5),
+       add = TRUE, breaks = 30, freq = FALSE)
+  legend("topright", c("Real", "Synthetic"),
+         fill = c(rgb(0.2, 0.4, 0.6, 0.5), rgb(0.8, 0.2, 0.2, 0.5)))
+}
+```
+
+### Categorical Variable Comparison
+
+```{r categorical-comparison, fig.width=12, fig.height=6}
+par(mfrow = c(2, 4))
+
+categorical_cols <- c("workclass", "education", "marital_status", "occupation",
+                      "relationship", "race", "sex", "income")
+
+for (col in categorical_cols) {
+  real_props <- prop.table(table(adult[[col]]))
+  synth_props <- prop.table(table(synthetic_data[[col]]))
+
+  # Align categories
+  all_cats <- union(names(real_props), names(synth_props))
+  real_aligned <- sapply(all_cats, function(x) ifelse(x %in% names(real_props), real_props[x], 0))
+  synth_aligned <- sapply(all_cats, function(x) ifelse(x %in% names(synth_props), synth_props[x], 0))
+
+  barplot(rbind(real_aligned, synth_aligned), beside = TRUE,
+          col = c(rgb(0.2, 0.4, 0.6, 0.7), rgb(0.8, 0.2, 0.2, 0.7)),
+          main = col, las = 2, cex.names = 0.7)
+}
+legend("topright", c("Real", "Synthetic"),
+       fill = c(rgb(0.2, 0.4, 0.6, 0.7), rgb(0.8, 0.2, 0.2, 0.7)))
+```
+
+### Statistical Comparison
+
+```{r statistical-comparison}
+# Compare summary statistics for continuous columns
+cat("\n=== Continuous Variables: Mean Comparison ===\n")
+for (col in continuous_cols) {
+  real_mean <- mean(adult[[col]], na.rm = TRUE)
+  synth_mean <- mean(synthetic_data[[col]], na.rm = TRUE)
+  diff_pct <- abs(real_mean - synth_mean) / real_mean * 100
+  cat(sprintf("%s: Real=%.2f, Synthetic=%.2f (%.1f%% diff)\n",
+              col, real_mean, synth_mean, diff_pct))
+}
+
+cat("\n=== Continuous Variables: Std Dev Comparison ===\n")
+for (col in continuous_cols) {
+  real_sd <- sd(adult[[col]], na.rm = TRUE)
+  synth_sd <- sd(synthetic_data[[col]], na.rm = TRUE)
+  diff_pct <- abs(real_sd - synth_sd) / real_sd * 100
+  cat(sprintf("%s: Real=%.2f, Synthetic=%.2f (%.1f%% diff)\n",
+              col, real_sd, synth_sd, diff_pct))
+}
+
+# Compare correlation structure
+cat("\n=== Correlation Matrix Comparison (Continuous) ===\n")
+real_cor <- cor(adult[, continuous_cols], use = "complete.obs")
+synth_cor <- cor(synthetic_data[, continuous_cols], use = "complete.obs")
+cor_diff <- abs(real_cor - synth_cor)
+cat("Max absolute correlation difference:", max(cor_diff), "\n")
+cat("Mean absolute correlation difference:", mean(cor_diff), "\n")
+```
+
+## Saving and Loading the Model
+
+Save the trained model for later use:
+
+```{r save-model}
+# Save the trained GAN
+save_gan(trained_gan, "adult_sota_gan")
+
+# Later, load it back
+loaded_gan <- load_gan("adult_sota_gan")
+
+# Generate more samples with the loaded model
+more_synthetic <- sample_synthetic_data(loaded_gan, transformer, n = 500)
+```
+
+## Advanced: Custom Generator Architecture
+
+For more control, you can create a custom TabularGenerator:
+
+```{r custom-generator}
+# Create a custom generator with self-attention
+custom_gen <- TabularGenerator(
+  noise_dim = 128,
+  output_info = transformer$output_info,
+  hidden_units = list(256, 256, 256, 256),  # 4 layers
+  tau = 0.2,
+  normalization = "layer",        # Layer norm instead of batch norm
+  activation = "gelu",            # GELU activation
+  init_method = "kaiming_normal", # Kaiming initialization
+  residual = TRUE,
+  attention = c(2, 4),            # Attention after layers 2 and 4
+  attention_heads = 8,
+  attention_dropout = 0.1
+)
+
+# Move to device
+custom_gen <- custom_gen$to(device = device)
+
+# Use in training
+trained_custom <- gan_trainer(
+  data = train_data,
+  noise_dim = 128,
+  generator = custom_gen,
+  value_function = "wgan-gp",
+  batch_size = 500,
+  epochs = 100,
+  device = device,
+  seed = 42
+)
+```
+
+## Advanced: Progressive Training
+
+For very deep networks, progressive training can help:
+```{r progressive-training}
+# Create generator with many layers
+deep_gen <- TabularGenerator(
+  noise_dim = 128,
+  output_info = transformer$output_info,
+  hidden_units = list(128, 256, 256, 256, 128),
+  attention = TRUE,
+  attention_heads = 4
+)$to(device = device)
+
+# Start with only 2 blocks active
+deep_gen$set_active_blocks(2)
+
+# Train for some epochs
+# ... training code ...
+
+# Gradually add more blocks
+deep_gen$set_active_blocks(3)
+# ... more training ...
+
+deep_gen$set_active_blocks(4)
+# ... more training ...
+
+# Finally use all blocks
+deep_gen$set_active_blocks(5)
+# ... final training ...
+```
+
+## Tips for Best Results
+
+1. **Data Preprocessing**:
+   - Use mode-specific normalization for columns with multi-modal distributions
+   - Increase `n_modes` for complex distributions (but watch for overfitting)
+
+2. **Architecture**:
+   - Start with 2-3 hidden layers of 256 units
+   - Enable residual connections for deeper networks
+   - Try self-attention if features have complex dependencies
+
+3. **Training**:
+   - Use WGAN-GP for stable training
+   - Enable PacGAN (pac=8-10) if you observe mode collapse
+   - Use cosine or step learning rate scheduling
+   - Set early stopping with patience of 20-50 epochs
+
+4. **Batch Size**:
+   - Larger batches (500-1000) generally help with tabular data
+   - Ensure `batch_size` is divisible by `pac`
+
+5. **Gumbel-Softmax Temperature**:
+   - Lower tau (0.1-0.2) for more discrete outputs
+   - Higher tau (0.5-1.0) for smoother gradients during early training
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

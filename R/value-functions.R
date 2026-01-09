@@ -92,3 +92,51 @@ WGAN_weight_clipper <- function(d_net, clip_values = c(-0.01, 0.01)) {
     d_net$parameters[[parameter]]$data()$clip_(clip_values[1], clip_values[2])
   }
 }
+
+
+#' @title Gradient Penalty for WGAN-GP
+#'
+#' @description Computes the gradient penalty for WGAN-GP training as described in
+#'   Gulrajani et al. (2017) "Improved Training of Wasserstein GANs".
+#'   The gradient penalty enforces the Lipschitz constraint on the discriminator
+#'   by penalizing gradients that deviate from norm 1 on interpolated samples.
+#'
+#' @param d_net The discriminator network (torch::nn_module)
+#' @param real_data Real data samples (torch_tensor)
+#' @param fake_data Generated fake data samples (torch_tensor)
+#' @param device The device to use ("cpu", "cuda", or "mps")
+#'
+#' @return The gradient penalty loss (torch_tensor)
+#' @export
+gradient_penalty <- function(d_net, real_data, fake_data, device = "cpu") {
+  batch_size <- real_data$shape[1]
+
+
+  # Sample random interpolation coefficients
+  alpha <- torch::torch_rand(batch_size, 1, device = device)
+
+  # Create interpolated samples between real and fake data
+  interpolates <- (alpha * real_data + (1 - alpha) * fake_data)$requires_grad_(TRUE)
+
+  # Get discriminator scores on interpolated samples
+  d_interpolates <- d_net(interpolates)
+
+  # Compute gradients of discriminator output w.r.t. interpolated inputs
+  gradients <- torch::autograd_grad(
+    outputs = d_interpolates,
+    inputs = interpolates,
+    grad_outputs = torch::torch_ones_like(d_interpolates, device = device),
+    create_graph = TRUE,
+    retain_graph = TRUE
+  )[[1]]
+
+  # Compute gradient norm
+  gradients <- gradients$view(c(batch_size, -1))
+  gradient_norm <- gradients$norm(2, dim = 2)
+
+  # Compute penalty: (||grad|| - 1)^2
+
+  gradient_penalty <- ((gradient_norm - 1) ^ 2)$mean()
+
+  return(gradient_penalty)
+}

@@ -5,7 +5,8 @@
 #' @param data Input a data set. Needs to be a matrix, array, torch::torch_tensor or torch::dataset.
 #' @param noise_dim The dimensions of the GAN noise vector z. Defaults to 2.
 #' @param noise_distribution The noise distribution. Expects a function that samples from a distribution and returns a torch_tensor. For convenience "normal" and "uniform" will automatically set a function. Defaults to "normal".
-#' @param value_function The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".
+#' @param value_function The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".
+#' @param gp_lambda The gradient penalty coefficient for WGAN-GP training. Only used when value_function is "wgan-gp". Defaults to 10.
 #' @param data_type "tabular" or "image", controls the data type, defaults to "tabular".
 #' @param generator The generator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.
 #' @param generator_optimizer The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr)`.
@@ -25,6 +26,9 @@
 #' @param plot_loss Monitor the losses during training with plots. Defaults to FALSE.
 #' @param device Input on which device (e.g. "cpu", "cuda", or "mps") training should be done. Defaults to "cpu".
 #' @param seed Optional seed for reproducibility. Sets both R's random seed and torch's random seed. Defaults to NULL (no seed).
+#' @param validation_data Optional validation data for monitoring training. Should be in the same format as training data.
+#' @param early_stopping Enable early stopping based on validation metrics. Defaults to FALSE.
+#' @param patience Number of epochs without improvement before stopping. Only used if early_stopping is TRUE. Defaults to 10.
 #'
 #' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
@@ -55,6 +59,7 @@ gan_trainer <-
            noise_dim = 2,
            noise_distribution = "normal",
            value_function = "original",
+           gp_lambda = 10,
            data_type = "tabular",
            generator = NULL,
            generator_optimizer = NULL,
@@ -73,7 +78,10 @@ gan_trainer <-
            track_loss = FALSE,
            plot_loss = FALSE,
            device = "cpu",
-           seed = NULL) {
+           seed = NULL,
+           validation_data = NULL,
+           early_stopping = FALSE,
+           patience = 10) {
 # Set random seeds for reproducibility -----------------------------------------
     if (!is.null(seed)) {
       set.seed(seed)
@@ -103,6 +111,20 @@ gan_trainer <-
     if("image_folder" %in% class(data)) {
       steps <- length(data$imgs[[1]]) %/% batch_size
     }
+
+# Prepare validation data if provided ------------------------------------------
+    if (!is.null(validation_data)) {
+      if ((any(c("array", "matrix") %in% class(validation_data)))) {
+        validation_data <- torch::torch_tensor(validation_data)$to(device = "cpu")
+      }
+    }
+
+# Initialize early stopping variables ------------------------------------------
+    best_val_metric <- Inf
+    epochs_without_improvement <- 0
+    best_generator_state <- NULL
+    best_discriminator_state <- NULL
+    validation_metrics <- list()
 
 # Set the plotting interval ----------------------------------------------------
     plot_interval <- ifelse(plot_interval == "epoch", steps, plot_interval)
@@ -173,6 +195,15 @@ gan_trainer <-
         weight_clipper <- WGAN_weight_clipper
 
       }
+      if (value_function == "wgan-gp") {
+        value_fct <- WGAN_value_fct
+
+        # No weight clipping needed for WGAN-GP
+        weight_clipper <- function(d_net) {
+
+        }
+
+      }
       if (value_function == "f-wgan") {
         value_fct <- KLWGAN_value_fct
 
@@ -215,6 +246,7 @@ gan_trainer <-
         d_optim,
         value_fct,
         weight_clipper,
+        gp_lambda = if (value_function == "wgan-gp") gp_lambda else 0,
         track_loss
       )
 
@@ -247,6 +279,97 @@ gan_trainer <-
           }
         }
 
+# Validation and early stopping at the end of each epoch -----------------------
+        if (i %% steps == 0) {
+          current_epoch <- i %/% steps
+
+          if (!is.null(validation_data) || early_stopping) {
+            # Compute validation metrics
+            g_net$eval()
+            d_net$eval()
+
+            # Generate synthetic samples for validation
+            val_noise <- sample_noise(c(min(500, nrow(data)), noise_dim))$to(device = device)
+            val_synth <- torch::with_no_grad(g_net(val_noise))
+
+            # Compute discriminator accuracy on validation data
+            if (!is.null(validation_data)) {
+              val_batch <- validation_data[sample(nrow(validation_data),
+                                                   size = min(batch_size, nrow(validation_data)))]$to(device = device)
+              val_real_scores <- torch::with_no_grad(d_net(val_batch))
+              val_fake_scores <- torch::with_no_grad(d_net(val_synth[1:min(batch_size, nrow(val_synth))]))
+
+              # Discriminator accuracy: real should be high, fake should be low
+              if (value_function == "original") {
+                d_acc_real <- (val_real_scores > 0.5)$float()$mean()$item()
+                d_acc_fake <- (val_fake_scores < 0.5)$float()$mean()$item()
+              } else {
+                # For WGAN variants, use sign of scores
+                d_acc_real <- (val_real_scores > 0)$float()$mean()$item()
+                d_acc_fake <- (val_fake_scores < 0)$float()$mean()$item()
+              }
+              d_accuracy <- (d_acc_real + d_acc_fake) / 2
+
+              # Compute generator diversity (average pairwise distance)
+              val_synth_array <- torch::as_array(val_synth$cpu())
+              if (nrow(val_synth_array) > 1) {
+                sample_idx <- sample(nrow(val_synth_array), min(100, nrow(val_synth_array)))
+                diversity <- mean(stats::dist(val_synth_array[sample_idx, , drop = FALSE]))
+              } else {
+                diversity <- 0
+              }
+
+              # Store validation metrics
+              validation_metrics[[length(validation_metrics) + 1]] <- list(
+                epoch = current_epoch,
+                d_accuracy = d_accuracy,
+                diversity = diversity
+              )
+
+              # Validation metric: we want balanced discriminator (accuracy ~0.5)
+              # and high diversity. Lower is better.
+              val_metric <- abs(d_accuracy - 0.5) - 0.01 * diversity
+            } else {
+              # Without validation data, use training loss variance as proxy
+              if (track_loss && length(losses$d_loss) >= steps) {
+                recent_d_loss <- tail(losses$d_loss, steps)
+                val_metric <- stats::sd(recent_d_loss)
+              } else {
+                val_metric <- Inf
+              }
+            }
+
+            # Early stopping check
+            if (early_stopping) {
+              if (val_metric < best_val_metric) {
+                best_val_metric <- val_metric
+                epochs_without_improvement <- 0
+                # Save best model state
+                best_generator_state <- g_net$state_dict()
+                best_discriminator_state <- d_net$state_dict()
+              } else {
+                epochs_without_improvement <- epochs_without_improvement + 1
+              }
+
+              if (epochs_without_improvement >= patience) {
+                cli::cli_alert_info(sprintf(
+                  "Early stopping at epoch %d (no improvement for %d epochs)",
+                  current_epoch, patience
+                ))
+                # Restore best model
+                if (!is.null(best_generator_state)) {
+                  g_net$load_state_dict(best_generator_state)
+                  d_net$load_state_dict(best_discriminator_state)
+                }
+                break
+              }
+            }
+
+            g_net$train()
+            d_net$train()
+          }
+        }
+
     }
 
     output <-  list(
@@ -255,10 +378,12 @@ gan_trainer <-
       generator_optimizer = g_optim,
       discriminator_optimizer = d_optim,
       losses = losses,
+      validation_metrics = if (length(validation_metrics) > 0) validation_metrics else NULL,
       settings = list(noise_dim = noise_dim,
                       noise_distribution = noise_distribution,
                       sample_noise = sample_noise,
                       value_function = value_function,
+                      gp_lambda = gp_lambda,
                       data_type = data_type,
                       base_lr = base_lr,
                       ttur_factor = ttur_factor,
@@ -270,7 +395,9 @@ gan_trainer <-
                       eval_dropout = eval_dropout,
                       synthetic_examples = synthetic_examples,
                       plot_dimensions = plot_dimensions,
-                      device = device)
+                      device = device,
+                      early_stopping = early_stopping,
+                      patience = patience)
     )
     class(output) <- "trained_RGAN"
     return(
@@ -282,8 +409,8 @@ gan_trainer <-
 
 #' @title gan_update_step
 #'
-#' @description Provides a function to send the output of a DataTransformer to
-#'   a torch tensor, so that it can be accessed during GAN training.
+#' @description Provides a function to perform a single GAN training update step,
+#'   including discriminator and generator updates.
 #'
 #' @param data Input a data set. Needs to be a matrix, array, torch::torch_tensor or torch::dataset.
 #' @param batch_size The number of training samples selected into the mini batch for training. Defaults to 50.
@@ -294,10 +421,11 @@ gan_trainer <-
 #' @param g_optim The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr)`.
 #' @param d_net The discriminator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.
 #' @param d_optim The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr * ttur_factor)`.
-#' @param value_function The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".
+#' @param value_function The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".
 #' @param weight_clipper The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.
+#' @param gp_lambda The gradient penalty coefficient for WGAN-GP. Set to 0 to disable. Defaults to 0.
 #' @param track_loss Store the training losses as additional output. Defaults to FALSE.
-#' @return A function
+#' @return A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL
 #' @export
 gan_update_step <-
   function(data,
@@ -311,6 +439,7 @@ gan_update_step <-
            d_optim,
            value_function,
            weight_clipper,
+           gp_lambda = 0,
            track_loss = FALSE) {
     # Get a fresh batch of data ------------------------------------------------
     real_data <- get_batch(data, batch_size, device)
@@ -325,6 +454,13 @@ gan_update_step <-
     dis_fake <- d_net(fake_data)
     # Calculate the discriminator loss
     d_loss <- value_function(dis_real, dis_fake)[["d_loss"]]
+
+    # Add gradient penalty for WGAN-GP -----------------------------------------
+    if (gp_lambda > 0) {
+      gp <- gradient_penalty(d_net, real_data, fake_data$detach(), device)
+      d_loss <- d_loss + gp_lambda * gp
+    }
+
     # Clip weights according to weight_clipper ---------------------------------
     weight_clipper(d_net)
     # What follows is one update step for the discriminator net-----------------

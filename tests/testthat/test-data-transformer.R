@@ -83,3 +83,57 @@ test_that("data_transformer roundtrip works with mixed data", {
   # Discrete column should match (allowing for ties in one-hot decoding)
  expect_equal(as.numeric(recovered[, "category"]), as.numeric(data[, "category"]))
 })
+
+test_that("data_transformer handles string categorical columns", {
+  set.seed(123)
+  data <- data.frame(
+    x = rnorm(100),
+    workclass = sample(c("Private", "Self-emp", "Gov", "Other"), 100, replace = TRUE),
+    education = sample(c("HS-grad", "Bachelors", "Masters"), 100, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  transformer <- data_transformer$new()
+  transformer$fit(data, discrete_columns = c("workclass", "education"))
+  transformed <- transformer$transform(data)
+
+  # Should have 1 continuous + 4 workclass + 3 education = 8 columns
+  expect_equal(ncol(transformed), 8)
+
+  # Inverse transform
+  recovered <- transformer$inverse_transform(transformed)
+
+  # Continuous column should be recovered exactly
+  expect_equal(recovered[, "x"], data[, "x"], tolerance = 1e-10)
+
+  # String categorical columns should be recovered as strings, not NA
+  expect_false(any(is.na(recovered[, "workclass"])))
+  expect_false(any(is.na(recovered[, "education"])))
+
+  # Should match original values
+  expect_equal(recovered[, "workclass"], data$workclass)
+  expect_equal(recovered[, "education"], data$education)
+})
+
+test_that("data_transformer handles mixed numeric and string categoricals", {
+  set.seed(123)
+  data <- data.frame(
+    x = rnorm(50),
+    num_cat = sample(1:3, 50, replace = TRUE),
+    str_cat = sample(c("A", "B", "C"), 50, replace = TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  transformer <- data_transformer$new()
+  transformer$fit(data, discrete_columns = c("num_cat", "str_cat"))
+  transformed <- transformer$transform(data)
+  recovered <- transformer$inverse_transform(transformed)
+
+  # Numeric categorical should be numeric
+  expect_true(is.numeric(recovered[, "num_cat"]))
+  expect_equal(recovered[, "num_cat"], data$num_cat)
+
+  # String categorical should be character
+  expect_true(is.character(recovered[, "str_cat"]))
+  expect_equal(recovered[, "str_cat"], data$str_cat)
+})

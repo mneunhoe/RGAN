@@ -45,6 +45,8 @@ device <- if (cuda_is_available()) {
 } else {
   "cpu"
 }
+
+device <- "cpu"
 cat("Using device:", device, "\n")
 ```
 
@@ -187,7 +189,7 @@ trained_gan <- gan_trainer(
 
   # === Training Parameters ===
   batch_size = 500,                   # Batch size
-  epochs = 300,                       # Maximum epochs
+  epochs = 1,                       # Maximum epochs
   base_lr = 2e-4,                     # Base learning rate
   ttur_factor = 1,                    # Two time-scale update rule factor
 

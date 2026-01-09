@@ -280,25 +280,21 @@ data_transformer <- R6::R6Class(
     },
     inverse_transform_discrete = function(meta, data) {
       levs <- meta$levs
-      #column <- factor(round(data) %*% 1:length(levs))
-      #column <- factor(t(apply(data, 1, function(x){
-      #ranks <- rank(x, ties.method = "random")
-      #ranks == max(ranks)
-      #})*1) %*% 1:length(levs))
-      max_index <- max.col(data, ties.method = "random")
-      row_col_index <-
-        stack(setNames(max_index, seq_along(max_index)))
-      max_matrix <-
-        Matrix::sparseMatrix(
-          as.numeric(row_col_index[, 2]),
-          row_col_index[, 1],
-          x = 1,
-          dims = c(max(as.numeric(row_col_index[, 2])), length(levs))
-        )
 
-      column <- factor(as.matrix(max_matrix) %*% 1:length(levs))
-      levels(column) <- levs
-      column <- as.numeric(as.character(column))
+      # Get the index of the maximum value in each row (the selected category)
+      max_index <- max.col(data, ties.method = "random")
+
+      # Map indices to category levels
+      column <- levs[max_index]
+
+      # Try to convert to numeric if the levels are numeric
+      # Otherwise keep as character
+      numeric_levs <- suppressWarnings(as.numeric(levs))
+      if (!any(is.na(numeric_levs))) {
+        # All levels are numeric, convert result to numeric
+        column <- as.numeric(column)
+      }
+
       return(column)
     },
     #' @description
@@ -313,24 +309,26 @@ data_transformer <- R6::R6Class(
     inverse_transform = function(data) {
       start <- 1
       output <- list()
-      column_names <- list()
+      column_names <- c()
       for (meta in self$meta) {
         dimensions <- meta$output_dimensions
-        columns_data <- data[, start:(start + dimensions - 1)]
+        columns_data <- data[, start:(start + dimensions - 1), drop = FALSE]
 
         if ("levs" %in% names(meta)) {
           inverted <- self$inverse_transform_discrete(meta, columns_data)
         } else {
           inverted <- self$inverse_transform_continuous(meta, columns_data)
         }
-        output[[length(output) + 1]] <- inverted
-        column_names[[length(column_names) + 1]] <- meta$name
+        output[[meta$name]] <- inverted
+        column_names <- c(column_names, meta$name)
         start <- start + dimensions
       }
-      output <- do.call("cbind", output)
-      colnames(output) <- do.call("c", column_names)
 
-      return(output)
+      # Use data.frame to preserve column types (numeric vs character)
+      result <- as.data.frame(output, stringsAsFactors = FALSE)
+      colnames(result) <- column_names
+
+      return(result)
     }
   ),
   private = list(

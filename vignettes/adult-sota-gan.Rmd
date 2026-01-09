@@ -123,12 +123,13 @@ transformer <- data_transformer$new()
 
 # Fit with mode-specific normalization for continuous columns
 # n_modes controls the number of GMM components (more modes = more expressive)
+# Use more modes (15-20) for columns with complex distributions like capital_gain
 transformer$fit(
   adult,
   discrete_columns = c("workclass", "education", "marital_status",
                        "occupation", "relationship", "race", "sex", "income"),
   mode_specific = TRUE,  # Enable mode-specific normalization
-  n_modes = 10           # Number of GMM components per continuous column
+  n_modes = 15           # More GMM components for complex distributions
 )
 
 # Transform the data
@@ -180,18 +181,18 @@ trained_gan <- gan_trainer(
 
   # === Generator Architecture (TabularGenerator) ===
   output_info = transformer$output_info,  # Enable Gumbel-Softmax
-  gumbel_tau = 0.2,                   # Temperature (lower = more discrete)
-  generator_hidden_units = list(256, 256, 256),  # 3 hidden layers
+  gumbel_tau = 0.1,                   # Lower temperature = more discrete categoricals
+  generator_hidden_units = list(256, 256, 256, 256),  # 4 hidden layers for more capacity
   generator_normalization = "batch",   # Batch normalization (CTGAN default)
-  generator_activation = "relu",       # ReLU activation
+  generator_activation = "leaky_relu", # LeakyReLU often works better than ReLU
   generator_init = "xavier_uniform",   # Xavier initialization
   generator_residual = TRUE,           # Enable residual connections
 
   # === Training Parameters ===
-  batch_size = 500,                   # Batch size
-  epochs = 1,                       # Maximum epochs
-  base_lr = 2e-4,                     # Base learning rate
-  ttur_factor = 1,                    # Two time-scale update rule factor
+  batch_size = 500,                   # Batch size (larger = more stable gradients)
+  epochs = 500,                       # More epochs for better convergence
+  base_lr = 1e-4,                     # Slightly lower LR for stability
+  ttur_factor = 2,                    # Train discriminator 2x faster (TTUR)
 
   # === PacGAN for Mode Collapse Prevention ===
   pac = 10,                           # Pack 10 samples together
@@ -202,7 +203,7 @@ trained_gan <- gan_trainer(
   # === Early Stopping ===
   validation_data = val_data,
   early_stopping = TRUE,
-  patience = 30,                      # Stop if no improvement for 30 epochs
+  patience = 50,                      # More patience - GANs can recover
 
   # === Monitoring ===
   track_loss = TRUE,                  # Track losses for plotting
@@ -361,40 +362,52 @@ loaded_gan <- load_gan("adult_sota_gan")
 more_synthetic <- sample_synthetic_data(loaded_gan, transformer, n = 500)
 ```
 
-## Advanced: Custom Generator Architecture
+## Advanced: Custom Generator with Self-Attention
 
-For more control, you can create a custom TabularGenerator:
+For datasets where features have complex interdependencies (e.g., age correlates with
+income, education correlates with occupation), self-attention can capture these
+relationships:
 
 ```{r custom-generator}
 # Create a custom generator with self-attention
+# Attention is applied after specified layers to capture feature relationships
 custom_gen <- TabularGenerator(
   noise_dim = 128,
   output_info = transformer$output_info,
   hidden_units = list(256, 256, 256, 256),  # 4 layers
-  tau = 0.2,
-  normalization = "layer",        # Layer norm instead of batch norm
-  activation = "gelu",            # GELU activation
-  init_method = "kaiming_normal", # Kaiming initialization
+  tau = 0.1,                      # Low temperature for discrete categoricals
+  normalization = "batch",        # Batch norm (most stable)
+  activation = "leaky_relu",      # LeakyReLU
+  init_method = "xavier_uniform",
   residual = TRUE,
   attention = c(2, 4),            # Attention after layers 2 and 4
-  attention_heads = 8,
+  attention_heads = 8,            # More heads = finer-grained attention
   attention_dropout = 0.1
 )
 
 # Move to device
 custom_gen <- custom_gen$to(device = device)
 
-# Use in training
+# Use in training with the custom generator
 trained_custom <- gan_trainer(
   data = train_data,
   noise_dim = 128,
   generator = custom_gen,
   value_function = "wgan-gp",
+  gp_lambda = 10,
   batch_size = 500,
-  epochs = 100,
+  epochs = 500,
+  base_lr = 1e-4,
+  ttur_factor = 2,
+  pac = 10,
+  lr_schedule = "cosine",
+  track_loss = TRUE,
   device = device,
   seed = 42
 )
+
+# Sample from the attention-enhanced generator
+synthetic_attention <- sample_synthetic_data(trained_custom, transformer, n = 1000)
 ```
 
 ## Advanced: Progressive Training
@@ -430,28 +443,76 @@ deep_gen$set_active_blocks(5)
 
 ## Tips for Best Results
 
-1. **Data Preprocessing**:
-   - Use mode-specific normalization for columns with multi-modal distributions
-   - Increase `n_modes` for complex distributions (but watch for overfitting)
+### 1. Data Preprocessing
 
-2. **Architecture**:
-   - Start with 2-3 hidden layers of 256 units
-   - Enable residual connections for deeper networks
-   - Try self-attention if features have complex dependencies
+- **Use mode-specific normalization** for columns with multi-modal distributions (like income,
+  capital gains with spikes at 0)
+- **Increase `n_modes`** (15-20) for complex distributions - the GMM needs enough components
+  to capture the data structure
+- **Handle outliers**: Consider clipping extreme values before training
 
-3. **Training**:
-   - Use WGAN-GP for stable training
-   - Enable PacGAN (pac=8-10) if you observe mode collapse
-   - Use cosine or step learning rate scheduling
-   - Set early stopping with patience of 20-50 epochs
+### 2. Architecture
 
-4. **Batch Size**:
-   - Larger batches (500-1000) generally help with tabular data
-   - Ensure `batch_size` is divisible by `pac`
+- **Deeper networks** (4 layers) have more capacity to learn complex distributions
+- **Enable residual connections** (`generator_residual = TRUE`) for stable gradient flow
+- **Use LeakyReLU** instead of ReLU - prevents "dying neurons"
+- **Try self-attention** for datasets where features have complex dependencies
 
-5. **Gumbel-Softmax Temperature**:
-   - Lower tau (0.1-0.2) for more discrete outputs
-   - Higher tau (0.5-1.0) for smoother gradients during early training
+### 3. Training Dynamics
+
+- **Use WGAN-GP** for stable training - it rarely suffers from mode collapse
+- **Enable TTUR** (`ttur_factor = 2-4`) - training the discriminator faster helps the
+  generator learn better
+- **Lower learning rate** (1e-4 or 5e-5) for more stable convergence
+- **More epochs** (500+) - GANs often need longer training than you expect
+- **Higher patience** (50+) for early stopping - GAN losses can be noisy
+
+### 4. Mode Collapse Prevention
+
+- **Enable PacGAN** (`pac = 8-10`) - the discriminator sees multiple samples together,
+  helping it detect lack of diversity
+- **Monitor diversity metrics** during training if possible
+- If you see repeated identical samples, increase `pac` or training time
+
+### 5. Batch Size
+
+- **Larger batches** (500-1000) provide more stable gradient estimates
+- Ensure `batch_size` is divisible by `pac`
+- If memory-limited, reduce batch size but increase epochs proportionally
+
+### 6. Gumbel-Softmax Temperature
+
+- **Lower tau (0.1)** produces more discrete categorical outputs (better for final samples)
+- **Higher tau (0.5-1.0)** provides smoother gradients (can help early training)
+- Consider temperature annealing: start high, reduce during training
+
+### 7. Post-Processing (if needed)
+
+After generating synthetic data, you may want to:
+
+```{r post-processing, eval=FALSE}
+# Clip continuous values to valid ranges
+synthetic_data$age <- pmax(17, pmin(90, synthetic_data$age))
+synthetic_data$hours_per_week <- pmax(1, pmin(99, synthetic_data$hours_per_week))
+
+# Round integer columns
+synthetic_data$age <- round(synthetic_data$age)
+synthetic_data$education_num <- round(synthetic_data$education_num)
+synthetic_data$hours_per_week <- round(synthetic_data$hours_per_week)
+
+# Ensure non-negative values where appropriate
+synthetic_data$capital_gain <- pmax(0, synthetic_data$capital_gain)
+synthetic_data$capital_loss <- pmax(0, synthetic_data$capital_loss)
+```
+
+### 8. Hyperparameter Search
+
+If results aren't satisfactory, try varying:
+- `noise_dim`: 64, 128, 256
+- `generator_hidden_units`: `list(128, 128)` to `list(512, 512, 512, 512)`
+- `base_lr`: 5e-5 to 5e-4
+- `gumbel_tau`: 0.1 to 0.5
+- `n_modes`: 5 to 20
 
 ## Session Info
 

@@ -36,15 +36,25 @@ mechanisms are:
 The `dp_gan_trainer()` function implements these mechanisms using the **OpenDP** library
 for cryptographically secure random number generation.
 
+### Secure vs Fast RNG
+
+By default, `dp_gan_trainer()` uses **cryptographically secure** random number generation
+via OpenDP (`secure_rng = TRUE`). This is required for formal privacy guarantees but is
+slower. For development and testing, you can set `secure_rng = FALSE` to use torch's
+standard (faster) RNG:
+- **Production/publishing**: Use `secure_rng = TRUE` (default) for valid privacy guarantees
+- **Development/testing**: Use `secure_rng = FALSE` for faster iteration
+
 ## Setup
 
 ```{r setup}
 library(RGAN)
 library(torch)
 
-# Check for OpenDP availability
-if (!requireNamespace("opendp", quietly = TRUE)) {
-  stop("This vignette requires the 'opendp' package. Install it with: install.packages('opendp', repos = 'https://opendp.r-universe.dev/')")
+# Check for OpenDP availability (only required when secure_rng = TRUE)
+has_opendp <- requireNamespace("opendp", quietly = TRUE)
+if (!has_opendp) {
+  message("OpenDP not available. Examples will use secure_rng = FALSE (faster but not cryptographically secure)")
 }
 
 # Set seed for reproducibility
@@ -148,7 +158,13 @@ dp_gan <- dp_gan_trainer(
 
   # === Device ===
   device = device,
-  seed = 42
+  seed = 42,
+
+  # === Security ===
+  # Use secure_rng = TRUE (default) for production with valid privacy guarantees
+
+  # Use secure_rng = FALSE for faster development/testing
+  secure_rng = has_opendp
 )
 
 # Check final privacy guarantee
@@ -210,7 +226,8 @@ for (eps in epsilon_values) {
     base_lr = 0.001,
     verbose = FALSE,
     device = device,
-    seed = 42
+    seed = 42,
+    secure_rng = has_opendp  # Use secure RNG if available
   )
 
   cat(sprintf("Final epsilon: %.4f\n", dp_models[[as.character(eps)]]$privacy$final_epsilon))
@@ -450,6 +467,8 @@ for (target in targets) {
   budget. Monitor epsilon consumption.
 - **Learning rate**: May need to be higher than non-DP training to compensate for
   noise. Start with 0.001-0.01.
+- **secure_rng**: Use `secure_rng = FALSE` during hyperparameter tuning for faster
+  iteration, then switch to `secure_rng = TRUE` for final training runs.
 
 ### 3. Monitoring Training
 
@@ -491,14 +510,22 @@ DP-GANs are appropriate when:
    and dataset size.
 
 2. **Computational cost**: Per-sample gradient computation is slower than batch
-   gradients. Consider using smaller models or fewer epochs.
+   gradients. Consider using smaller models or fewer epochs. For faster iteration
+   during development, use `secure_rng = FALSE`.
 
 3. **Privacy accounting**: The privacy guarantees assume correct implementation
    of all mechanisms (subsampling, clipping, noise). RGAN uses OpenDP for
-   cryptographically secure operations.
+   cryptographically secure operations when `secure_rng = TRUE` (default).
 
 4. **Composition**: If you perform multiple analyses on the same data, privacy
    budgets compose. Plan your total budget accordingly.
+
+5. **Secure vs fast RNG**: The `secure_rng` parameter controls whether to use
+   cryptographically secure random number generation:
+   - `secure_rng = TRUE` (default): Uses OpenDP for secure noise. **Required for
+     valid privacy guarantees** when publishing results or deploying models.
+   - `secure_rng = FALSE`: Uses torch's standard RNG. Significantly faster but
+     **does not provide cryptographic security**. Useful for development/testing.
 
 ## Session Info
 

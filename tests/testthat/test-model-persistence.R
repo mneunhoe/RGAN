@@ -1,4 +1,4 @@
-test_that("save_gan creates a file", {
+test_that("save_gan creates expected files", {
   skip_if_not_installed("torch")
 
   data <- sample_toydata(n = 100)
@@ -13,12 +13,55 @@ test_that("save_gan creates a file", {
     seed = 123
   )
 
-  temp_file <- tempfile(fileext = ".rgan")
-  on.exit(unlink(temp_file), add = TRUE)
+  temp_dir <- tempdir()
+  base_path <- file.path(temp_dir, "test_gan")
+  on.exit({
+    unlink(paste0(base_path, "_generator.pt"))
+    unlink(paste0(base_path, "_discriminator.pt"))
+    unlink(paste0(base_path, "_metadata.rds"))
+    unlink(paste0(base_path, "_g_optim.pt"))
+    unlink(paste0(base_path, "_d_optim.pt"))
+  }, add = TRUE)
 
-  save_gan(trained_gan, temp_file)
+  save_gan(trained_gan, base_path)
 
-  expect_true(file.exists(temp_file))
+  expect_true(file.exists(paste0(base_path, "_generator.pt")))
+  expect_true(file.exists(paste0(base_path, "_discriminator.pt")))
+  expect_true(file.exists(paste0(base_path, "_metadata.rds")))
+  expect_true(file.exists(paste0(base_path, "_g_optim.pt")))
+  expect_true(file.exists(paste0(base_path, "_d_optim.pt")))
+})
+
+test_that("save_gan without optimizers skips optimizer files", {
+  skip_if_not_installed("torch")
+
+  data <- sample_toydata(n = 100)
+  transformer <- data_transformer$new()
+  transformer$fit(data)
+  transformed_data <- transformer$transform(data)
+
+  trained_gan <- gan_trainer(
+    transformed_data,
+    epochs = 2,
+    batch_size = 20,
+    seed = 123
+  )
+
+  temp_dir <- tempdir()
+  base_path <- file.path(temp_dir, "test_gan_no_optim")
+  on.exit({
+    unlink(paste0(base_path, "_generator.pt"))
+    unlink(paste0(base_path, "_discriminator.pt"))
+    unlink(paste0(base_path, "_metadata.rds"))
+  }, add = TRUE)
+
+  save_gan(trained_gan, base_path, include_optimizers = FALSE)
+
+  expect_true(file.exists(paste0(base_path, "_generator.pt")))
+  expect_true(file.exists(paste0(base_path, "_discriminator.pt")))
+  expect_true(file.exists(paste0(base_path, "_metadata.rds")))
+  expect_false(file.exists(paste0(base_path, "_g_optim.pt")))
+  expect_false(file.exists(paste0(base_path, "_d_optim.pt")))
 })
 
 test_that("load_gan restores a saved model", {
@@ -36,11 +79,18 @@ test_that("load_gan restores a saved model", {
     seed = 123
   )
 
-  temp_file <- tempfile(fileext = ".rgan")
-  on.exit(unlink(temp_file), add = TRUE)
+  temp_dir <- tempdir()
+  base_path <- file.path(temp_dir, "test_gan_load")
+  on.exit({
+    unlink(paste0(base_path, "_generator.pt"))
+    unlink(paste0(base_path, "_discriminator.pt"))
+    unlink(paste0(base_path, "_metadata.rds"))
+    unlink(paste0(base_path, "_g_optim.pt"))
+    unlink(paste0(base_path, "_d_optim.pt"))
+  }, add = TRUE)
 
-  save_gan(trained_gan, temp_file)
-  loaded_gan <- load_gan(temp_file)
+  save_gan(trained_gan, base_path)
+  loaded_gan <- load_gan(base_path)
 
   expect_s3_class(loaded_gan, "trained_RGAN")
   expect_true(!is.null(loaded_gan$generator))
@@ -64,11 +114,18 @@ test_that("save/load roundtrip produces identical samples", {
     seed = 123
   )
 
-  temp_file <- tempfile(fileext = ".rgan")
-  on.exit(unlink(temp_file), add = TRUE)
+  temp_dir <- tempdir()
+  base_path <- file.path(temp_dir, "test_gan_roundtrip")
+  on.exit({
+    unlink(paste0(base_path, "_generator.pt"))
+    unlink(paste0(base_path, "_discriminator.pt"))
+    unlink(paste0(base_path, "_metadata.rds"))
+    unlink(paste0(base_path, "_g_optim.pt"))
+    unlink(paste0(base_path, "_d_optim.pt"))
+  }, add = TRUE)
 
-  save_gan(trained_gan, temp_file)
-  loaded_gan <- load_gan(temp_file)
+  save_gan(trained_gan, base_path)
+  loaded_gan <- load_gan(base_path)
 
   # Generate samples with same noise from both models
   torch::torch_manual_seed(999)
@@ -83,12 +140,12 @@ test_that("save/load roundtrip produces identical samples", {
   expect_equal(samples_original, samples_loaded, tolerance = 1e-5)
 })
 
-test_that("load_gan fails gracefully with invalid file", {
-  expect_error(load_gan("nonexistent_file.rgan"), "File not found")
+test_that("load_gan fails gracefully with missing files", {
+  expect_error(load_gan("nonexistent_model"), "Generator file not found")
 })
 
 test_that("save_gan fails with non-trained_RGAN object", {
-  expect_error(save_gan(list(a = 1), "test.rgan"), "must be an object of class")
+  expect_error(save_gan(list(a = 1), "test"), "must be an object of class")
 })
 
 test_that("save/load works with wgan-gp model", {
@@ -108,12 +165,53 @@ test_that("save/load works with wgan-gp model", {
     seed = 123
   )
 
-  temp_file <- tempfile(fileext = ".rgan")
-  on.exit(unlink(temp_file), add = TRUE)
+  temp_dir <- tempdir()
+  base_path <- file.path(temp_dir, "test_gan_wgangp")
+  on.exit({
+    unlink(paste0(base_path, "_generator.pt"))
+    unlink(paste0(base_path, "_discriminator.pt"))
+    unlink(paste0(base_path, "_metadata.rds"))
+    unlink(paste0(base_path, "_g_optim.pt"))
+    unlink(paste0(base_path, "_d_optim.pt"))
+  }, add = TRUE)
 
-  save_gan(trained_gan, temp_file)
-  loaded_gan <- load_gan(temp_file)
+  save_gan(trained_gan, base_path)
+  loaded_gan <- load_gan(base_path)
 
   expect_equal(loaded_gan$settings$value_function, "wgan-gp")
   expect_equal(loaded_gan$settings$gp_lambda, 5)
+})
+
+test_that("load_gan handles path with extension", {
+  skip_if_not_installed("torch")
+
+  data <- sample_toydata(n = 100)
+  transformer <- data_transformer$new()
+  transformer$fit(data)
+  transformed_data <- transformer$transform(data)
+
+  trained_gan <- gan_trainer(
+    transformed_data,
+    epochs = 2,
+    batch_size = 20,
+    seed = 123
+  )
+
+  temp_dir <- tempdir()
+  base_path <- file.path(temp_dir, "test_gan_ext")
+  on.exit({
+    unlink(paste0(base_path, "_generator.pt"))
+    unlink(paste0(base_path, "_discriminator.pt"))
+    unlink(paste0(base_path, "_metadata.rds"))
+    unlink(paste0(base_path, "_g_optim.pt"))
+    unlink(paste0(base_path, "_d_optim.pt"))
+  }, add = TRUE)
+
+  # Save with extension (should be stripped)
+  save_gan(trained_gan, paste0(base_path, ".rgan"))
+
+  # Load with extension (should be stripped)
+  loaded_gan <- load_gan(paste0(base_path, ".rgan"))
+
+  expect_s3_class(loaded_gan, "trained_RGAN")
 })

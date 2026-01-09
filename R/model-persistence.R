@@ -4,11 +4,20 @@
 #'   discriminator, optimizers, and all training settings. The model can be
 #'   restored later using \code{\link{load_gan}}.
 #'
+#'   The function creates multiple files with the given path as base name:
+#'   \itemize{
+#'     \item \code{path_generator.pt} - Generator network weights
+#'     \item \code{path_discriminator.pt} - Discriminator network weights
+#'     \item \code{path_metadata.rds} - Settings, losses, and metadata
+#'     \item \code{path_g_optim.pt} - Generator optimizer state (if include_optimizers=TRUE
+#'     \item \code{path_d_optim.pt} - Discriminator optimizer state (if include_optimizers=TRUE)
+#'   }
+#'
 #' @param trained_gan A trained GAN object of class "trained_RGAN" returned by \code{\link{gan_trainer}}
-#' @param path The file path where the model should be saved (should end in .rds or .rgan)
+#' @param path The base file path for saving (without extension). Files will be created with suffixes.
 #' @param include_optimizers Whether to include optimizer states for resuming training. Defaults to TRUE.
 #'
-#' @return Invisibly returns the path where the model was saved
+#' @return Invisibly returns the base path where the model was saved
 #' @export
 #'
 #' @examples
@@ -21,47 +30,42 @@
 #' trained_gan <- gan_trainer(transformed_data, epochs = 10)
 #'
 #' # Save the trained GAN
-#' save_gan(trained_gan, "my_gan_model.rgan")
+#' save_gan(trained_gan, "my_gan_model")
 #'
 #' # Load it back later
-#' loaded_gan <- load_gan("my_gan_model.rgan")
+#' loaded_gan <- load_gan("my_gan_model")
 #' }
 save_gan <- function(trained_gan, path, include_optimizers = TRUE) {
   if (!inherits(trained_gan, "trained_RGAN")) {
     stop("trained_gan must be an object of class 'trained_RGAN' returned by gan_trainer()")
   }
 
-  # Create a list to store all model components
-  model_data <- list(
-    # Store network state dicts (weights)
-    generator_state = trained_gan$generator$state_dict(),
-    discriminator_state = trained_gan$discriminator$state_dict(),
+  # Remove any file extension from path to use as base name
+  path <- sub("\\.[^.]*$", "", path)
 
-    # Store settings needed to reconstruct the networks
-    settings = trained_gan$settings,
+  # Save generator and discriminator networks directly
+  torch::torch_save(trained_gan$generator, paste0(path, "_generator.pt"))
+  torch::torch_save(trained_gan$discriminator, paste0(path, "_discriminator.pt"))
 
-    # Store losses if available
-    losses = trained_gan$losses,
-
-    # Metadata
-    metadata = list(
-      rgan_version = as.character(utils::packageVersion("RGAN")),
-      torch_version = as.character(utils::packageVersion("torch")),
-      saved_at = Sys.time(),
-      include_optimizers = include_optimizers
-    )
-  )
-
-  # Optionally include optimizer states for resuming training
- if (include_optimizers) {
-    model_data$generator_optimizer_state <- trained_gan$generator_optimizer$state_dict()
-    model_data$discriminator_optimizer_state <- trained_gan$discriminator_optimizer$state_dict()
+  # Optionally save optimizer states
+  if (include_optimizers) {
+    torch::torch_save(trained_gan$generator_optimizer$state_dict(), paste0(path, "_g_optim.pt"))
+    torch::torch_save(trained_gan$discriminator_optimizer$state_dict(), paste0(path, "_d_optim.pt"))
   }
 
-  # Save using torch's serialization for tensor compatibility
- torch::torch_save(model_data, path)
+  # Save R metadata (settings, losses, etc.) separately
+  metadata <- list(
+    settings = trained_gan$settings,
+    losses = trained_gan$losses,
+    validation_metrics = trained_gan$validation_metrics,
+    rgan_version = as.character(utils::packageVersion("RGAN")),
+    torch_version = as.character(utils::packageVersion("torch")),
+    saved_at = Sys.time(),
+    include_optimizers = include_optimizers
+  )
+  saveRDS(metadata, paste0(path, "_metadata.rds"))
 
-  message(sprintf("GAN model saved to: %s", path))
+  message(sprintf("GAN model saved to: %s_*.pt/rds", path))
   invisible(path)
 }
 
@@ -72,7 +76,7 @@ save_gan <- function(trained_gan, path, include_optimizers = TRUE) {
 #'   \code{\link{save_gan}}. The loaded model can be used for sampling
 #'   synthetic data or continued training.
 #'
-#' @param path The file path to the saved model
+#' @param path The base file path to the saved model (without extension, same as used in save_gan)
 #' @param device The device to load the model onto ("cpu", "cuda", or "mps").
 #'   Defaults to "cpu". Use this to move a model trained on GPU to CPU or vice versa.
 #'
@@ -84,7 +88,7 @@ save_gan <- function(trained_gan, path, include_optimizers = TRUE) {
 #' @examples
 #' \dontrun{
 #' # Load a previously saved GAN
-#' loaded_gan <- load_gan("my_gan_model.rgan")
+#' loaded_gan <- load_gan("my_gan_model")
 #'
 #' # Use it to generate synthetic data
 #' transformer <- data_transformer$new()
@@ -102,76 +106,47 @@ save_gan <- function(trained_gan, path, include_optimizers = TRUE) {
 #' )
 #' }
 load_gan <- function(path, device = "cpu") {
-  if (!file.exists(path)) {
-    stop(sprintf("File not found: %s", path))
+  # Remove any file extension from path to use as base name
+  path <- sub("\\.[^.]*$", "", path)
+
+  # Check for required files
+  generator_path <- paste0(path, "_generator.pt")
+  discriminator_path <- paste0(path, "_discriminator.pt")
+  metadata_path <- paste0(path, "_metadata.rds")
+
+  if (!file.exists(generator_path)) {
+    stop(sprintf("Generator file not found: %s", generator_path))
+  }
+  if (!file.exists(discriminator_path)) {
+    stop(sprintf("Discriminator file not found: %s", discriminator_path))
+  }
+  if (!file.exists(metadata_path)) {
+    stop(sprintf("Metadata file not found: %s", metadata_path))
   }
 
-  # Load the saved model data
- model_data <- torch::torch_load(path)
+  # Load the networks
+  g_net <- torch::torch_load(generator_path)
+  d_net <- torch::torch_load(discriminator_path)
 
-  # Check for required components
-  required <- c("generator_state", "discriminator_state", "settings", "metadata")
-  missing <- setdiff(required, names(model_data))
-  if (length(missing) > 0) {
-    stop(sprintf("Invalid model file. Missing components: %s", paste(missing, collapse = ", ")))
-  }
+  # Move to specified device
+  g_net <- g_net$to(device = device)
+  d_net <- d_net$to(device = device)
 
-  settings <- model_data$settings
-
-  # Reconstruct the generator network
-  if (settings$data_type == "tabular") {
-    # For tabular data, we need to infer data_dim from the state dict
-    # The output layer weight shape tells us the data dimension
-    output_weight <- model_data$generator_state$Output.weight
-    data_dim <- output_weight$shape[1]
-    noise_dim <- settings$noise_dim
-
-    g_net <- Generator(
-      noise_dim = noise_dim,
-      data_dim = data_dim,
-      dropout_rate = 0.5
-    )$to(device = device)
-  } else {
-    # For image data, use DCGAN architecture
-    g_net <- DCGAN_Generator(
-      noise_dim = settings$noise_dim,
-      dropout_rate = 0.5
-    )$to(device = device)
-  }
-
-  # Load generator weights
-  g_net$load_state_dict(model_data$generator_state)
-
-  # Reconstruct the discriminator network
-  if (settings$data_type == "tabular") {
-    # Determine if sigmoid was used based on value function
-    use_sigmoid <- identical(settings$value_function, "original")
-
-    d_net <- Discriminator(
-      data_dim = data_dim,
-      dropout_rate = 0.5,
-      sigmoid = use_sigmoid
-    )$to(device = device)
-  } else {
-    use_sigmoid <- identical(settings$value_function, "original")
-    d_net <- DCGAN_Discriminator(
-      dropout_rate = 0.5,
-      sigmoid = use_sigmoid
-    )$to(device = device)
-  }
-
-  # Load discriminator weights
-  d_net$load_state_dict(model_data$discriminator_state)
+  # Load metadata
+  metadata <- readRDS(metadata_path)
+  settings <- metadata$settings
 
   # Reconstruct optimizers
   g_optim <- torch::optim_adam(g_net$parameters, lr = settings$base_lr)
   d_optim <- torch::optim_adam(d_net$parameters, lr = settings$base_lr * settings$ttur_factor)
 
   # Load optimizer states if available
-  if (model_data$metadata$include_optimizers &&
-      !is.null(model_data$generator_optimizer_state)) {
-    g_optim$load_state_dict(model_data$generator_optimizer_state)
-    d_optim$load_state_dict(model_data$discriminator_optimizer_state)
+  g_optim_path <- paste0(path, "_g_optim.pt")
+  d_optim_path <- paste0(path, "_d_optim.pt")
+
+  if (metadata$include_optimizers && file.exists(g_optim_path) && file.exists(d_optim_path)) {
+    g_optim$load_state_dict(torch::torch_load(g_optim_path))
+    d_optim$load_state_dict(torch::torch_load(d_optim_path))
   }
 
   # Update device in settings
@@ -183,7 +158,8 @@ load_gan <- function(path, device = "cpu") {
     discriminator = d_net,
     generator_optimizer = g_optim,
     discriminator_optimizer = d_optim,
-    losses = model_data$losses,
+    losses = metadata$losses,
+    validation_metrics = metadata$validation_metrics,
     settings = settings
   )
   class(output) <- "trained_RGAN"
@@ -191,7 +167,7 @@ load_gan <- function(path, device = "cpu") {
   message(sprintf(
     "GAN model loaded from: %s (saved with RGAN v%s)",
     path,
-    model_data$metadata$rgan_version
+    metadata$rgan_version
   ))
 
   return(output)

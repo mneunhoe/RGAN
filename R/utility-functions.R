@@ -1,3 +1,7 @@
+#' @importFrom utils tail
+#' @importFrom R6 R6Class
+NULL
+
 #' @title Gumbel-Softmax Sampling
 #'
 #' @description Implements the Gumbel-Softmax (Concrete) distribution for differentiable

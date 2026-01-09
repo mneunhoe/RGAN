@@ -10,6 +10,8 @@ GAN_value_fct(real_scores, fake_scores, epsilon = 1e-07)
 \item{real_scores}{The discriminator scores on real examples ($D(x)$)}
 
 \item{fake_scores}{The discriminator scores on fake examples ($D(G(z))$)}
+
+\item{epsilon}{Small constant for numerical stability to avoid log(0). Defaults to 1e-7.}
 }
 \value{
 The function returns a named list with the entries d_loss and g_loss

@@ -5,6 +5,7 @@
 #'
 #' @param real_scores The discriminator scores on real examples ($D(x)$)
 #' @param fake_scores The discriminator scores on fake examples ($D(G(z))$)
+#' @param epsilon Small constant for numerical stability to avoid log(0). Defaults to 1e-7.
 #'
 #' @return The function returns a named list with the entries d_loss and g_loss
 #' @export

@@ -92,9 +92,18 @@ plot(
 
 torch_manual_seed(20220629)
 
-device <- torch_device(ifelse(cuda_is_available(), "cuda", "cpu"))
-device <- torch_device("mps")
-trained_gan <- gan_trainer(transformed_data, device = device)
+# Check for GPU availability
+device <- if (cuda_is_available()) {
+  "cuda"
+} else if (torch::backends_mps_is_available()) {
+ "mps"
+} else {
+  "cpu"
+}
+
+cat("Using device:", device, "\n")
+
+trained_gan <- gan_trainer(data = transformed_data, device = device)
 
 # Sample synthetic data from the trained GAN
 
@@ -130,7 +139,7 @@ Note that this example is a bit more resource intensive.
 With a GPU training the following GAN for one epoch takes about 17 minutes. 
 Training on CPU takes considerably longer, on my machine (Apple Macbook Air M1, running R and torch through Rosetta) about 6 hours.
 
-```{r Example 4.2}
+```{r Example 4.2, eval=FALSE}
 # Create celeba directory in working directory
 dir.create()
 here::here()
@@ -144,8 +153,17 @@ dataset <- torchvision::image_folder_dataset(root = "~/Desktop/celeba",
                                                return(x)
                                              })
 
-device <- torch_device(ifelse(cuda_is_available(), "cuda", "cpu"))
-device <- torch_device("mps")
+# Check for GPU availability
+device <- if (cuda_is_available()) {
+  "cuda"
+} else if (torch::backends_mps_is_available()) {
+ "mps"
+} else {
+  "cpu"
+}
+
+cat("Using device:", device, "\n")
+
 g_net <- DCGAN_Generator(dropout_rate = 0, noise_dim = 100)$to(device = device)
 d_net <- DCGAN_Discriminator(dropout_rate = 0, sigmoid = F)$to(device = device)
 

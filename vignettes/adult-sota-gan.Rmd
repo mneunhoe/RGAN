@@ -409,7 +409,7 @@ trained_custom <- gan_trainer(
 synthetic_attention <- sample_synthetic_data(trained_custom, transformer, n = 1000)
 ```
 
-```{r plot-losses}
+```{r plot-losses custom generator}
 # Plot training losses (requires track_loss = TRUE during training)
 if (!is.null(trained_gan$losses)) {
   plot_losses(trained_custom, smooth = 0.9)
@@ -419,7 +419,7 @@ if (!is.null(trained_gan$losses)) {
 
 ### Visual Comparison
 
-```{r visual-comparison, fig.width=10, fig.height=8}
+```{r visual-comparison custom generator, fig.width=10, fig.height=8}
 # Compare distributions of continuous variables
 par(mfrow = c(2, 3))
 
@@ -444,7 +444,7 @@ for (col in continuous_cols) {
 
 ### Categorical Variable Comparison
 
-```{r categorical-comparison, fig.width=12, fig.height=6}
+```{r categorical-comparison custom generator, fig.width=12, fig.height=6}
 par(mfrow = c(2, 4))
 
 categorical_cols <- c("workclass", "education", "marital_status", "occupation",

@@ -200,6 +200,11 @@ print.trained_RGAN <- function(x, ...) {
   }
   if (!is.null(x$settings$output_info)) {
     cat(sprintf("  Gumbel-Softmax: enabled (tau=%.2f)\n", x$settings$gumbel_tau))
+    cat(sprintf("  Generator architecture: %s normalization, %s activation\n",
+                x$settings$generator_normalization, x$settings$generator_activation))
+    if (x$settings$generator_residual) {
+      cat("  Residual connections: enabled\n")
+    }
   }
   cat("\n")
 

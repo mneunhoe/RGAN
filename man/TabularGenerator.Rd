@@ -8,8 +8,12 @@ TabularGenerator(
   noise_dim,
   output_info,
   hidden_units = list(256, 256),
-  dropout_rate = 0.5,
-  tau = 0.2
+  dropout_rate = 0,
+  tau = 0.2,
+  normalization = "batch",
+  activation = "relu",
+  init_method = "xavier_uniform",
+  residual = TRUE
 )
 }
 \arguments{
@@ -18,11 +22,27 @@ TabularGenerator(
 \item{output_info}{A list describing the output structure from data_transformer$output_info.
 Each element is a list with (dimension, type) where type is "linear", "mode_specific", or "softmax".}
 
-\item{hidden_units}{A list of the number of neurons per layer}
+\item{hidden_units}{A list of the number of neurons per layer. Defaults to list(256, 256)
+as used in CTGAN.}
 
-\item{dropout_rate}{The dropout rate for each hidden layer}
+\item{dropout_rate}{The dropout rate for each hidden layer. Only used when
+normalization is "none". Defaults to 0.0.}
 
-\item{tau}{Temperature for Gumbel-Softmax. Lower values produce more discrete outputs. Defaults to 0.2.}
+\item{tau}{Temperature for Gumbel-Softmax. Lower values produce more discrete outputs.
+Defaults to 0.2.}
+
+\item{normalization}{Type of normalization to use: "batch" (default, as in CTGAN),
+"layer", or "none". Batch normalization is generally preferred for GANs.}
+
+\item{activation}{Activation function: "relu" (default, as in CTGAN), "leaky_relu",
+"gelu", or "silu". GELU and SiLU are modern alternatives that can improve performance.}
+
+\item{init_method}{Weight initialization method: "xavier_uniform" (default),
+"xavier_normal", "kaiming_uniform", or "kaiming_normal". Xavier is generally
+preferred for networks with tanh/sigmoid outputs.}
+
+\item{residual}{Enable residual connections between layers of the same width.
+Defaults to TRUE.}
 }
 \value{
 A torch::nn_module for the Tabular Generator
@@ -31,4 +51,32 @@ A torch::nn_module for the Tabular Generator
 Provides a torch::nn_module Generator for tabular data that applies
 Gumbel-Softmax to categorical outputs for differentiable sampling. This improves
 gradient flow for discrete variables compared to standard softmax.
+
+Supports state-of-the-art architectural choices from CTGAN and other modern
+tabular GAN architectures:
+\itemize{
+\item \strong{Residual connections:} Skip connections that improve gradient flow
+in deeper networks (enabled by default when consecutive layers have same width)
+\item \strong{Batch Normalization:} Stabilizes training (CTGAN default)
+\item \strong{Layer Normalization:} Alternative that works better with small batches
+\item \strong{Multiple activation functions:} ReLU, LeakyReLU, GELU, SiLU
+\item \strong{Weight initialization:} Xavier or Kaiming initialization
+}
+}
+\examples{
+\dontrun{
+# Basic usage with CTGAN-style defaults
+output_info <- list(list(1, "linear"), list(3, "softmax"))
+gen <- TabularGenerator(noise_dim = 128, output_info = output_info)
+
+# Custom architecture with layer normalization and GELU
+gen <- TabularGenerator(
+  noise_dim = 128,
+  output_info = output_info,
+  hidden_units = list(256, 256, 256),
+  normalization = "layer",
+  activation = "gelu",
+  init_method = "kaiming_uniform"
+)
+}
 }

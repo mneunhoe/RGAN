@@ -158,69 +158,229 @@ forward = function(input) {
   )
 
 
+#' @title Residual Block for Generator
+#'
+#' @description A residual block with configurable normalization and activation.
+#'   Used internally by TabularGenerator for CTGAN-style architecture.
+#'
+#' @param input_dim Input dimension
+#' @param output_dim Output dimension
+#' @param normalization Type of normalization: "batch", "layer", or "none"
+#' @param activation Activation function: "relu", "leaky_relu", "gelu", or "silu"
+#' @param dropout_rate Dropout rate (only used when normalization is "none")
+#'
+#' @return A torch::nn_module for the residual block
+#' @keywords internal
+ResidualBlock <- torch::nn_module(
+  initialize = function(input_dim,
+                        output_dim,
+                        normalization = "batch",
+                        activation = "relu",
+                        dropout_rate = 0.0) {
+
+    self$input_dim <- input_dim
+    self$output_dim <- output_dim
+    self$use_residual <- (input_dim == output_dim)
+
+    # Linear layer
+    self$linear <- torch::nn_linear(input_dim, output_dim)
+
+    # Normalization
+    self$normalization <- normalization
+    if (normalization == "batch") {
+      self$norm <- torch::nn_batch_norm1d(output_dim)
+    } else if (normalization == "layer") {
+      self$norm <- torch::nn_layer_norm(output_dim)
+    } else {
+      self$norm <- NULL
+      # Use dropout when no normalization
+      if (dropout_rate > 0) {
+        self$dropout <- torch::nn_dropout(dropout_rate)
+      } else {
+        self$dropout <- NULL
+      }
+    }
+
+    # Activation
+    self$activation_type <- activation
+    self$act <- switch(
+      activation,
+      "relu" = torch::nn_relu(),
+      "leaky_relu" = torch::nn_leaky_relu(0.2),
+      "gelu" = torch::nn_gelu(),
+      "silu" = torch::nn_silu(),
+      torch::nn_relu()  # default
+    )
+  },
+
+  forward = function(x) {
+    out <- self$linear(x)
+
+    if (!is.null(self$norm)) {
+      out <- self$norm(out)
+    }
+
+    out <- self$act(out)
+
+    if (!is.null(self$dropout)) {
+      out <- self$dropout(out)
+    }
+
+    # Residual connection (only if dimensions match)
+    if (self$use_residual) {
+      out <- out + x
+    }
+
+    return(out)
+  }
+)
+
+
 #' @title Tabular Generator with Gumbel-Softmax
 #'
 #' @description Provides a torch::nn_module Generator for tabular data that applies
 #'   Gumbel-Softmax to categorical outputs for differentiable sampling. This improves
 #'   gradient flow for discrete variables compared to standard softmax.
 #'
+#'   Supports state-of-the-art architectural choices from CTGAN and other modern
+#'   tabular GAN architectures:
+#'   \itemize{
+#'     \item \strong{Residual connections:} Skip connections that improve gradient flow
+#'       in deeper networks (enabled by default when consecutive layers have same width)
+#'     \item \strong{Batch Normalization:} Stabilizes training (CTGAN default)
+#'     \item \strong{Layer Normalization:} Alternative that works better with small batches
+#'     \item \strong{Multiple activation functions:} ReLU, LeakyReLU, GELU, SiLU
+#'     \item \strong{Weight initialization:} Xavier or Kaiming initialization
+#'   }
+#'
 #' @param noise_dim The length of the noise vector per example
 #' @param output_info A list describing the output structure from data_transformer$output_info.
 #'   Each element is a list with (dimension, type) where type is "linear", "mode_specific", or "softmax".
-#' @param hidden_units A list of the number of neurons per layer
-#' @param dropout_rate The dropout rate for each hidden layer
-#' @param tau Temperature for Gumbel-Softmax. Lower values produce more discrete outputs. Defaults to 0.2.
+#' @param hidden_units A list of the number of neurons per layer. Defaults to list(256, 256)
+#'   as used in CTGAN.
+#' @param dropout_rate The dropout rate for each hidden layer. Only used when
+#'   normalization is "none". Defaults to 0.0.
+#' @param tau Temperature for Gumbel-Softmax. Lower values produce more discrete outputs.
+#'   Defaults to 0.2.
+#' @param normalization Type of normalization to use: "batch" (default, as in CTGAN),
+#'   "layer", or "none". Batch normalization is generally preferred for GANs.
+#' @param activation Activation function: "relu" (default, as in CTGAN), "leaky_relu",
+#'   "gelu", or "silu". GELU and SiLU are modern alternatives that can improve performance.
+#' @param init_method Weight initialization method: "xavier_uniform" (default),
+#'   "xavier_normal", "kaiming_uniform", or "kaiming_normal". Xavier is generally
+#'   preferred for networks with tanh/sigmoid outputs.
+#' @param residual Enable residual connections between layers of the same width.
+#'   Defaults to TRUE.
 #'
 #' @return A torch::nn_module for the Tabular Generator
 #' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Basic usage with CTGAN-style defaults
+#' output_info <- list(list(1, "linear"), list(3, "softmax"))
+#' gen <- TabularGenerator(noise_dim = 128, output_info = output_info)
+#'
+#' # Custom architecture with layer normalization and GELU
+#' gen <- TabularGenerator(
+#'   noise_dim = 128,
+#'   output_info = output_info,
+#'   hidden_units = list(256, 256, 256),
+#'   normalization = "layer",
+#'   activation = "gelu",
+#'   init_method = "kaiming_uniform"
+#' )
+#' }
 TabularGenerator <- torch::nn_module(
   initialize = function(noise_dim,
                         output_info,
                         hidden_units = list(256, 256),
-                        dropout_rate = 0.5,
-                        tau = 0.2) {
+                        dropout_rate = 0.0,
+                        tau = 0.2,
+                        normalization = "batch",
+                        activation = "relu",
+                        init_method = "xavier_uniform",
+                        residual = TRUE) {
 
-    # Store output_info and tau for forward pass
+    # Store parameters for forward pass
     self$output_info <- output_info
     self$tau <- tau
     self$training_mode <- TRUE
+    self$normalization <- normalization
+    self$activation <- activation
+    self$residual <- residual
+
+    # Validate parameters
+    valid_norms <- c("batch", "layer", "none")
+    if (!normalization %in% valid_norms) {
+      stop(sprintf("normalization must be one of: %s", paste(valid_norms, collapse = ", ")))
+    }
+    valid_acts <- c("relu", "leaky_relu", "gelu", "silu")
+    if (!activation %in% valid_acts) {
+      stop(sprintf("activation must be one of: %s", paste(valid_acts, collapse = ", ")))
+    }
+    valid_inits <- c("xavier_uniform", "xavier_normal", "kaiming_uniform", "kaiming_normal")
+    if (!init_method %in% valid_inits) {
+      stop(sprintf("init_method must be one of: %s", paste(valid_inits, collapse = ", ")))
+    }
 
     # Calculate total output dimension
     data_dim <- sum(sapply(output_info, function(x) x[[1]]))
 
-    # Build the network
-    self$seq <- torch::nn_sequential()
+    # Build the network with residual blocks
+    self$blocks <- torch::nn_module_list()
 
     dim <- noise_dim
-    i <- 1
+    for (i in seq_along(hidden_units)) {
+      neurons <- hidden_units[[i]]
 
-    for (neurons in hidden_units) {
-      self$seq$add_module(
-        module = torch::nn_linear(dim, neurons),
-        name = paste0("Linear_", i)
+      # Create residual block
+      block <- ResidualBlock(
+        input_dim = dim,
+        output_dim = neurons,
+        normalization = normalization,
+        activation = activation,
+        dropout_rate = if (normalization == "none") dropout_rate else 0.0
       )
-      self$seq$add_module(
-        module = torch::nn_leaky_relu(0.2),
-        name = paste0("Activation_", i)
-      )
-      self$seq$add_module(
-        module = torch::nn_dropout(dropout_rate),
-        name = paste0("Dropout_", i)
-      )
+
+      # Disable residual if requested or dimensions don't match
+      if (!residual) {
+        block$use_residual <- FALSE
+      }
+
+      self$blocks$append(block)
       dim <- neurons
-      i <- i + 1
     }
 
     # Output layer - no activation, will apply specific activations in forward
-    self$seq$add_module(
-      module = torch::nn_linear(dim, data_dim),
-      name = "Output"
-    )
+    self$output_layer <- torch::nn_linear(dim, data_dim)
+
+    # Apply weight initialization
+    self$apply(function(module) {
+      if (inherits(module, "nn_linear")) {
+        switch(
+          init_method,
+          "xavier_uniform" = torch::nn_init_xavier_uniform_(module$weight),
+          "xavier_normal" = torch::nn_init_xavier_normal_(module$weight),
+          "kaiming_uniform" = torch::nn_init_kaiming_uniform_(module$weight, a = 0.2),
+          "kaiming_normal" = torch::nn_init_kaiming_normal_(module$weight, a = 0.2)
+        )
+        if (!is.null(module$bias)) {
+          torch::nn_init_zeros_(module$bias)
+        }
+      }
+    })
   },
 
   forward = function(input, hard = NULL) {
-    # Get raw output from network
-    data <- self$seq(input)
+    # Pass through residual blocks
+    data <- input
+    for (i in seq_along(self$blocks)) {
+      data <- self$blocks[[i]](data)
+    }
+
+    # Output layer
+    data <- self$output_layer(data)
 
     # Apply appropriate activation to each output block
     outputs <- list()
@@ -231,12 +391,11 @@ TabularGenerator <- torch::nn_module(
       col_type <- info[[2]]
       end_idx <- start_idx + dim - 1
 
-      # Slice the relevant columns (R uses 1-based indexing, torch uses 0-based)
+      # Slice the relevant columns
       col_data <- data[, start_idx:end_idx]
 
       if (col_type == "softmax") {
         # Apply Gumbel-Softmax for categorical columns
-        # Use hard=TRUE during inference (eval mode), soft during training
         use_hard <- if (!is.null(hard)) hard else !self$training
         col_data <- gumbel_softmax(col_data, tau = self$tau, hard = use_hard, dim = 2)
       } else if (col_type == "linear") {
@@ -249,16 +408,12 @@ TabularGenerator <- torch::nn_module(
           mode_logits <- col_data[, 1:(dim - 1)]
           value <- col_data[, dim, drop = FALSE]
 
-          # Apply Gumbel-Softmax to mode indicators
           use_hard <- if (!is.null(hard)) hard else !self$training
           mode_probs <- gumbel_softmax(mode_logits, tau = self$tau, hard = use_hard, dim = 2)
-
-          # Apply tanh to value
           value <- torch::torch_tanh(value)
 
           col_data <- torch::torch_cat(list(mode_probs, value), dim = 2)
         } else {
-          # Single column mode_specific (shouldn't happen, but handle gracefully)
           col_data <- torch::torch_tanh(col_data)
         }
       }

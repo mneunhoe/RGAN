@@ -37,7 +37,12 @@ gan_trainer(
   lr_decay_steps = 50,
   pac = 1,
   output_info = NULL,
-  gumbel_tau = 0.2
+  gumbel_tau = 0.2,
+  generator_hidden_units = list(256, 256),
+  generator_normalization = "batch",
+  generator_activation = "relu",
+  generator_init = "xavier_uniform",
+  generator_residual = TRUE
 )
 }
 \arguments{
@@ -114,6 +119,21 @@ Each element should be a list with (dimension, type) where type is "linear", "mo
 
 \item{gumbel_tau}{Temperature for Gumbel-Softmax. Lower values (e.g., 0.2) produce more discrete
 outputs. Only used when output_info is provided. Defaults to 0.2.}
+
+\item{generator_hidden_units}{List of hidden layer sizes for TabularGenerator. Defaults to
+list(256, 256) as used in CTGAN. Only used when output_info is provided.}
+
+\item{generator_normalization}{Normalization type for TabularGenerator: "batch" (default, CTGAN-style),
+"layer", or "none". Only used when output_info is provided.}
+
+\item{generator_activation}{Activation function for TabularGenerator: "relu" (default), "leaky_relu",
+"gelu", or "silu". Only used when output_info is provided.}
+
+\item{generator_init}{Weight initialization for TabularGenerator: "xavier_uniform" (default),
+"xavier_normal", "kaiming_uniform", or "kaiming_normal". Only used when output_info is provided.}
+
+\item{generator_residual}{Enable residual connections in TabularGenerator. Defaults to TRUE.
+Only used when output_info is provided.}
 }
 \value{
 gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.

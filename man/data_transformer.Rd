@@ -69,22 +69,22 @@ reconstructed_data <- transformer$inverse_transform(transformed_data)
 \section{Methods}{
 \subsection{Public methods}{
 \itemize{
-\item \href{#method-new}{\code{data_transformer$new()}}
-\item \href{#method-fit_continuous}{\code{data_transformer$fit_continuous()}}
-\item \href{#method-fit_discrete}{\code{data_transformer$fit_discrete()}}
-\item \href{#method-fit}{\code{data_transformer$fit()}}
-\item \href{#method-transform_continuous}{\code{data_transformer$transform_continuous()}}
-\item \href{#method-transform_discrete}{\code{data_transformer$transform_discrete()}}
-\item \href{#method-transform}{\code{data_transformer$transform()}}
-\item \href{#method-inverse_transform_continuous}{\code{data_transformer$inverse_transform_continuous()}}
-\item \href{#method-inverse_transform_discrete}{\code{data_transformer$inverse_transform_discrete()}}
-\item \href{#method-inverse_transform}{\code{data_transformer$inverse_transform()}}
-\item \href{#method-clone}{\code{data_transformer$clone()}}
+\item \href{#method-data_transformer-new}{\code{data_transformer$new()}}
+\item \href{#method-data_transformer-fit_continuous}{\code{data_transformer$fit_continuous()}}
+\item \href{#method-data_transformer-fit_discrete}{\code{data_transformer$fit_discrete()}}
+\item \href{#method-data_transformer-fit}{\code{data_transformer$fit()}}
+\item \href{#method-data_transformer-transform_continuous}{\code{data_transformer$transform_continuous()}}
+\item \href{#method-data_transformer-transform_discrete}{\code{data_transformer$transform_discrete()}}
+\item \href{#method-data_transformer-transform}{\code{data_transformer$transform()}}
+\item \href{#method-data_transformer-inverse_transform_continuous}{\code{data_transformer$inverse_transform_continuous()}}
+\item \href{#method-data_transformer-inverse_transform_discrete}{\code{data_transformer$inverse_transform_discrete()}}
+\item \href{#method-data_transformer-inverse_transform}{\code{data_transformer$inverse_transform()}}
+\item \href{#method-data_transformer-clone}{\code{data_transformer$clone()}}
 }
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-new"></a>}}
-\if{latex}{\out{\hypertarget{method-new}{}}}
+\if{html}{\out{<a id="method-data_transformer-new"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-new}{}}}
 \subsection{Method \code{new()}}{
 Create a new data_transformer object
 \subsection{Usage}{
@@ -93,8 +93,8 @@ Create a new data_transformer object
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-fit_continuous"></a>}}
-\if{latex}{\out{\hypertarget{method-fit_continuous}{}}}
+\if{html}{\out{<a id="method-data_transformer-fit_continuous"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-fit_continuous}{}}}
 \subsection{Method \code{fit_continuous()}}{
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_continuous(column = NULL, data = NULL)}\if{html}{\out{</div>}}
@@ -102,8 +102,8 @@ Create a new data_transformer object
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-fit_discrete"></a>}}
-\if{latex}{\out{\hypertarget{method-fit_discrete}{}}}
+\if{html}{\out{<a id="method-data_transformer-fit_discrete"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-fit_discrete}{}}}
 \subsection{Method \code{fit_discrete()}}{
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_discrete(column = NULL, data = NULL)}\if{html}{\out{</div>}}
@@ -111,8 +111,8 @@ Create a new data_transformer object
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-fit"></a>}}
-\if{latex}{\out{\hypertarget{method-fit}{}}}
+\if{html}{\out{<a id="method-data_transformer-fit"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-fit}{}}}
 \subsection{Method \code{fit()}}{
 Fit a data_transformer to data.
 \subsection{Usage}{
@@ -140,8 +140,8 @@ transformer$fit(data)
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-transform_continuous"></a>}}
-\if{latex}{\out{\hypertarget{method-transform_continuous}{}}}
+\if{html}{\out{<a id="method-data_transformer-transform_continuous"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-transform_continuous}{}}}
 \subsection{Method \code{transform_continuous()}}{
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$transform_continuous(column_meta, data)}\if{html}{\out{</div>}}
@@ -149,8 +149,8 @@ transformer$fit(data)
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-transform_discrete"></a>}}
-\if{latex}{\out{\hypertarget{method-transform_discrete}{}}}
+\if{html}{\out{<a id="method-data_transformer-transform_discrete"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-transform_discrete}{}}}
 \subsection{Method \code{transform_discrete()}}{
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$transform_discrete(column_meta, data)}\if{html}{\out{</div>}}
@@ -158,8 +158,8 @@ transformer$fit(data)
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-transform"></a>}}
-\if{latex}{\out{\hypertarget{method-transform}{}}}
+\if{html}{\out{<a id="method-data_transformer-transform"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-transform}{}}}
 \subsection{Method \code{transform()}}{
 Transform data using a fitted data_transformer. (From original format to transformed format.)
 \subsection{Usage}{
@@ -186,8 +186,8 @@ transformed_data <- transformer$transform(data)
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-inverse_transform_continuous"></a>}}
-\if{latex}{\out{\hypertarget{method-inverse_transform_continuous}{}}}
+\if{html}{\out{<a id="method-data_transformer-inverse_transform_continuous"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-inverse_transform_continuous}{}}}
 \subsection{Method \code{inverse_transform_continuous()}}{
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$inverse_transform_continuous(meta, data)}\if{html}{\out{</div>}}
@@ -195,8 +195,8 @@ transformed_data <- transformer$transform(data)
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-inverse_transform_discrete"></a>}}
-\if{latex}{\out{\hypertarget{method-inverse_transform_discrete}{}}}
+\if{html}{\out{<a id="method-data_transformer-inverse_transform_discrete"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-inverse_transform_discrete}{}}}
 \subsection{Method \code{inverse_transform_discrete()}}{
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$inverse_transform_discrete(meta, data)}\if{html}{\out{</div>}}
@@ -204,8 +204,8 @@ transformed_data <- transformer$transform(data)
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-inverse_transform"></a>}}
-\if{latex}{\out{\hypertarget{method-inverse_transform}{}}}
+\if{html}{\out{<a id="method-data_transformer-inverse_transform"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-inverse_transform}{}}}
 \subsection{Method \code{inverse_transform()}}{
 Inverse Transform data using a fitted data_transformer. (From transformed format to original format.)
 \subsection{Usage}{
@@ -233,8 +233,8 @@ reconstructed_data <- transformer$inverse_transform(transformed_data)
 
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-clone"></a>}}
-\if{latex}{\out{\hypertarget{method-clone}{}}}
+\if{html}{\out{<a id="method-data_transformer-clone"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-clone}{}}}
 \subsection{Method \code{clone()}}{
 The objects of this class are cloneable with this method.
 \subsection{Usage}{

@@ -16,6 +16,7 @@ gan_update_step(
   d_optim,
   value_function,
   weight_clipper,
+  gp_lambda = 0,
   track_loss = FALSE
 )
 }
@@ -38,16 +39,18 @@ gan_update_step(
 
 \item{d_optim}{The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup \code{torch::optim_adam(g_net$parameters, lr = base_lr * ttur_factor)}.}
 
-\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".}
+\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".}
 
 \item{weight_clipper}{The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.}
+
+\item{gp_lambda}{The gradient penalty coefficient for WGAN-GP. Set to 0 to disable. Defaults to 0.}
 
 \item{track_loss}{Store the training losses as additional output. Defaults to FALSE.}
 }
 \value{
-A function
+A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL
 }
 \description{
-Provides a function to send the output of a DataTransformer to
-a torch tensor, so that it can be accessed during GAN training.
+Provides a function to perform a single GAN training update step,
+including discriminator and generator updates.
 }

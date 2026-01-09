@@ -112,19 +112,19 @@ test_that("WGAN_weight_clipper clips weights correctly", {
 
   # Set some weights to extreme values
   torch::with_no_grad({
-    d_net$parameters$Linear_1.weight$fill_(10)
+    d_net$parameters$seq.Linear_1.weight$fill_(10)
   })
 
   # Verify weights are extreme
-  max_before <- d_net$parameters$Linear_1.weight$max()$item()
+  max_before <- d_net$parameters$seq.Linear_1.weight$max()$item()
   expect_true(max_before > 1)
 
   # Apply weight clipping
   WGAN_weight_clipper(d_net, clip_values = c(-0.01, 0.01))
 
   # Verify weights are clipped
-  max_after <- d_net$parameters$Linear_1.weight$max()$item()
-  min_after <- d_net$parameters$Linear_1.weight$min()$item()
+  max_after <- d_net$parameters$seq.Linear_1.weight$max()$item()
+  min_after <- d_net$parameters$seq.Linear_1.weight$min()$item()
 
   expect_true(max_after <= 0.01)
   expect_true(min_after >= -0.01)

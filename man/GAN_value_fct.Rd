@@ -4,7 +4,7 @@
 \alias{GAN_value_fct}
 \title{GAN Value Function}
 \usage{
-GAN_value_fct(real_scores, fake_scores)
+GAN_value_fct(real_scores, fake_scores, epsilon = 1e-07)
 }
 \arguments{
 \item{real_scores}{The discriminator scores on real examples ($D(x)$)}

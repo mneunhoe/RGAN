@@ -9,6 +9,7 @@ gan_trainer(
   noise_dim = 2,
   noise_distribution = "normal",
   value_function = "original",
+  gp_lambda = 10,
   data_type = "tabular",
   generator = NULL,
   generator_optimizer = NULL,
@@ -26,7 +27,11 @@ gan_trainer(
   plot_dimensions = c(1, 2),
   track_loss = FALSE,
   plot_loss = FALSE,
-  device = "cpu"
+  device = "cpu",
+  seed = NULL,
+  validation_data = NULL,
+  early_stopping = FALSE,
+  patience = 10
 )
 }
 \arguments{
@@ -36,7 +41,9 @@ gan_trainer(
 
 \item{noise_distribution}{The noise distribution. Expects a function that samples from a distribution and returns a torch_tensor. For convenience "normal" and "uniform" will automatically set a function. Defaults to "normal".}
 
-\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For reference see: . For convenience three loss functions "original", "wasserstein" and "f-wgan" are already implemented. Defaults to "original".}
+\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".}
+
+\item{gp_lambda}{The gradient penalty coefficient for WGAN-GP training. Only used when value_function is "wgan-gp". Defaults to 10.}
 
 \item{data_type}{"tabular" or "image", controls the data type, defaults to "tabular".}
 
@@ -73,6 +80,14 @@ gan_trainer(
 \item{plot_loss}{Monitor the losses during training with plots. Defaults to FALSE.}
 
 \item{device}{Input on which device (e.g. "cpu", "cuda", or "mps") training should be done. Defaults to "cpu".}
+
+\item{seed}{Optional seed for reproducibility. Sets both R's random seed and torch's random seed. Defaults to NULL (no seed).}
+
+\item{validation_data}{Optional validation data for monitoring training. Should be in the same format as training data.}
+
+\item{early_stopping}{Enable early stopping based on validation metrics. Defaults to FALSE.}
+
+\item{patience}{Number of epochs without improvement before stopping. Only used if early_stopping is TRUE. Defaults to 10.}
 }
 \value{
 gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.

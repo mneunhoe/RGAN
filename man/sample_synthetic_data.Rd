@@ -4,12 +4,14 @@
 \alias{sample_synthetic_data}
 \title{Sample Synthetic Data from a trained RGAN}
 \usage{
-sample_synthetic_data(trained_gan, transformer = NULL)
+sample_synthetic_data(trained_gan, transformer = NULL, n_samples = NULL)
 }
 \arguments{
 \item{trained_gan}{A trained RGAN object of class "trained_RGAN"}
 
 \item{transformer}{The transformer object used to pre-process the data}
+
+\item{n_samples}{The number of synthetic samples to generate. Defaults to NULL, which will use \code{trained_gan$settings$synthetic_examples}.}
 }
 \value{
 Function to sample from a

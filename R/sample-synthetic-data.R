@@ -35,6 +35,7 @@ expert_sample_synthetic_data <-
 #'
 #' @param trained_gan A trained RGAN object of class "trained_RGAN"
 #' @param transformer The transformer object used to pre-process the data
+#' @param n_samples The number of synthetic samples to generate. Defaults to NULL, which will use `trained_gan$settings$synthetic_examples`.
 #'
 #' @return Function to sample from a
 #' @export
@@ -60,9 +61,13 @@ expert_sample_synthetic_data <-
 #' main = "Real and Synthetic Data after Training")
 #' }
 sample_synthetic_data <-
-  function(trained_gan, transformer = NULL) {
+  function(trained_gan, transformer = NULL, n_samples = NULL) {
+
+    if(is.null(n_samples)) {
+      n_samples <- trained_gan$settings$synthetic_examples
+    }
     z <- trained_gan$settings$sample_noise(c(
-      trained_gan$settings$synthetic_examples,
+      n_samples,
       trained_gan$settings$noise_dim
     ))$to(device = trained_gan$settings$device)
 

@@ -37,6 +37,9 @@
 #' @param device Device for computation ("cpu", "cuda", "mps"). Defaults to "cpu".
 #' @param seed Optional seed for reproducibility. Defaults to NULL.
 #' @param verbose Print privacy accounting information during training. Defaults to TRUE.
+#' @param secure_rng Use cryptographically secure RNG from OpenDP for noise generation.
+#'   Defaults to TRUE. Set to FALSE for faster training during development/testing
+#'   (uses torch's standard RNG which is not cryptographically secure).
 #'
 #' @return A list of class "trained_RGAN" containing:
 #' \itemize{
@@ -126,11 +129,18 @@ dp_gan_trainer <- function(
     track_loss = FALSE,
     device = "cpu",
     seed = NULL,
-    verbose = TRUE
+    verbose = TRUE,
+    secure_rng = TRUE
 ) {
-  # Check for OpenDP availability
-  if (!requireNamespace("opendp", quietly = TRUE)) {
-    stop("Package 'opendp' is required for dp_gan_trainer. Install it with: install.packages('opendp')")
+  # Check for OpenDP availability (only required if secure_rng = TRUE)
+  if (secure_rng && !requireNamespace("opendp", quietly = TRUE)) {
+    stop("Package 'opendp' is required when secure_rng = TRUE. Install it with: install.packages('opendp')")
+  }
+
+  if (!secure_rng && verbose) {
+    cli::cli_alert_warning(
+      "secure_rng = FALSE: Using torch RNG (faster but not cryptographically secure)"
+    )
   }
 
   # Set random seeds for reproducibility
@@ -310,7 +320,8 @@ dp_gan_trainer <- function(
         d_net = d_net,
         d_optim = d_optim,
         max_grad_norm = max_grad_norm,
-        noise_multiplier = noise_multiplier
+        noise_multiplier = noise_multiplier,
+        secure_rng = secure_rng
       )
 
       # Update step counter
@@ -573,6 +584,24 @@ secure_poisson_subsample <- function(n_samples, sampling_rate) {
 }
 
 
+#' @title Fast Poisson Subsampling (Non-Cryptographic)
+#'
+#' @description Fast Poisson subsampling using R's standard RNG.
+#'   Not cryptographically secure but much faster for development/testing.
+#'
+#' @param n_samples Total number of samples in the dataset
+#' @param sampling_rate Probability of including each sample
+#'
+#' @return Integer vector of selected indices
+#'
+#' @keywords internal
+fast_poisson_subsample <- function(n_samples, sampling_rate) {
+  # Use R's fast uniform RNG
+  uniforms <- stats::runif(n_samples)
+  which(uniforms < sampling_rate)
+}
+
+
 #' @title Sample Secure Gaussian Noise using OpenDP
 #'
 #' @description Generate Gaussian noise with the same shape as a tensor using
@@ -629,6 +658,7 @@ sample_secure_gaussian_like <- function(tensor, scale) {
 #' @param d_optim Discriminator optimizer
 #' @param max_grad_norm Maximum gradient norm for clipping
 #' @param noise_multiplier Gaussian noise multiplier
+#' @param secure_rng Use cryptographically secure RNG (slower but secure)
 #'
 #' @return Scalar loss value
 #'
@@ -644,10 +674,15 @@ dp_discriminator_step <- function(
     d_net,
     d_optim,
     max_grad_norm,
-    noise_multiplier
+    noise_multiplier,
+    secure_rng = TRUE
 ) {
-  # Poisson subsample the batch using secure sampling
-  batch_indices <- secure_poisson_subsample(n_samples, sampling_rate)
+  # Poisson subsample the batch
+  if (secure_rng) {
+    batch_indices <- secure_poisson_subsample(n_samples, sampling_rate)
+  } else {
+    batch_indices <- fast_poisson_subsample(n_samples, sampling_rate)
+  }
 
   # Handle empty batch
   if (length(batch_indices) == 0) {
@@ -723,8 +758,12 @@ dp_discriminator_step <- function(
       # Average the clipped gradients
       avg_grad <- accumulated_grads[[param_idx]] / actual_batch_size
 
-      # Add secure Gaussian noise
-      noise <- sample_secure_gaussian_like(avg_grad, noise_scale / actual_batch_size)
+      # Add Gaussian noise (secure or fast)
+      if (secure_rng) {
+        noise <- sample_secure_gaussian_like(avg_grad, noise_scale / actual_batch_size)
+      } else {
+        noise <- torch::torch_randn_like(avg_grad) * (noise_scale / actual_batch_size)
+      }
 
       # Set noisy gradient
       param$grad <- avg_grad + noise

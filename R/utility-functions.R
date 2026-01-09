@@ -1,3 +1,49 @@
+#' @title Gumbel-Softmax Sampling
+#'
+#' @description Implements the Gumbel-Softmax (Concrete) distribution for differentiable
+#'   sampling from categorical distributions. During training, returns soft samples that
+#'   allow gradients to flow. During inference, can return hard one-hot samples.
+#'
+#' @param logits A torch tensor of unnormalized log probabilities
+#' @param tau Temperature parameter. Lower values make the distribution more discrete.
+#'   Defaults to 1.0.
+#' @param hard If TRUE, returns hard one-hot samples but gradients are computed as if
+#'   soft samples were used (straight-through estimator). Defaults to FALSE.
+#' @param dim The dimension along which to apply softmax. Defaults to -1 (last dimension).
+#'
+#' @return A torch tensor of the same shape as logits, containing either soft or hard samples
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' logits <- torch::torch_randn(c(10, 5))  # 10 samples, 5 categories
+#' soft_samples <- gumbel_softmax(logits, tau = 0.5)
+#' hard_samples <- gumbel_softmax(logits, tau = 0.5, hard = TRUE)
+#' }
+gumbel_softmax <- function(logits, tau = 1.0, hard = FALSE, dim = -1) {
+  # Sample from Gumbel(0, 1) distribution
+  # Using inverse CDF method: -log(-log(U)) where U ~ Uniform(0, 1)
+  gumbels <- -torch::torch_log(-torch::torch_log(
+    torch::torch_rand_like(logits)$clamp(min = 1e-10, max = 1 - 1e-10)
+  ))
+
+  # Add Gumbel noise to logits and apply softmax
+  y_soft <- torch::nnf_softmax((logits + gumbels) / tau, dim = dim)
+
+  if (hard) {
+    # Get hard one-hot encoding
+    index <- y_soft$max(dim = dim, keepdim = TRUE)[[2]]
+    y_hard <- torch::torch_zeros_like(logits)$scatter_(dim, index, 1.0)
+    # Straight-through estimator: use hard in forward, soft gradients in backward
+    ret <- (y_hard - y_soft$detach()) + y_soft
+  } else {
+    ret <- y_soft
+  }
+
+  return(ret)
+}
+
+
 #' @title Uniform Random numbers between values a and b
 #'
 #' @description Provides a function to sample torch tensors from an arbitrary uniform distribution.
@@ -151,6 +197,9 @@ print.trained_RGAN <- function(x, ...) {
   }
   if (!is.null(x$settings$pac) && x$settings$pac > 1) {
     cat(sprintf("  PacGAN: enabled (pac=%d)\n", x$settings$pac))
+  }
+  if (!is.null(x$settings$output_info)) {
+    cat(sprintf("  Gumbel-Softmax: enabled (tau=%.2f)\n", x$settings$gumbel_tau))
   }
   cat("\n")
 

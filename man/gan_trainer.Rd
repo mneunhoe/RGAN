@@ -35,7 +35,9 @@ gan_trainer(
   lr_schedule = "constant",
   lr_decay_factor = 0.1,
   lr_decay_steps = 50,
-  pac = 1
+  pac = 1,
+  output_info = NULL,
+  gumbel_tau = 0.2
 )
 }
 \arguments{
@@ -105,6 +107,13 @@ gan_trainer(
 \item{pac}{Number of samples to pack together for PacGAN (reduces mode collapse). The discriminator
 sees \code{pac} samples concatenated together, helping it detect lack of diversity. Must divide batch_size
 evenly. Defaults to 1 (standard GAN, no packing). Common values are 8 or 10.}
+
+\item{output_info}{Optional output structure from data_transformer$output_info. When provided,
+enables Gumbel-Softmax for categorical columns, improving gradient flow for discrete variables.
+Each element should be a list with (dimension, type) where type is "linear", "mode_specific", or "softmax".}
+
+\item{gumbel_tau}{Temperature for Gumbel-Softmax. Lower values (e.g., 0.2) produce more discrete
+outputs. Only used when output_info is provided. Defaults to 0.2.}
 }
 \value{
 gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.

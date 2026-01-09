@@ -156,3 +156,118 @@ forward = function(input) {
   input
 }
   )
+
+
+#' @title Tabular Generator with Gumbel-Softmax
+#'
+#' @description Provides a torch::nn_module Generator for tabular data that applies
+#'   Gumbel-Softmax to categorical outputs for differentiable sampling. This improves
+#'   gradient flow for discrete variables compared to standard softmax.
+#'
+#' @param noise_dim The length of the noise vector per example
+#' @param output_info A list describing the output structure from data_transformer$output_info.
+#'   Each element is a list with (dimension, type) where type is "linear", "mode_specific", or "softmax".
+#' @param hidden_units A list of the number of neurons per layer
+#' @param dropout_rate The dropout rate for each hidden layer
+#' @param tau Temperature for Gumbel-Softmax. Lower values produce more discrete outputs. Defaults to 0.2.
+#'
+#' @return A torch::nn_module for the Tabular Generator
+#' @export
+TabularGenerator <- torch::nn_module(
+  initialize = function(noise_dim,
+                        output_info,
+                        hidden_units = list(256, 256),
+                        dropout_rate = 0.5,
+                        tau = 0.2) {
+
+    # Store output_info and tau for forward pass
+    self$output_info <- output_info
+    self$tau <- tau
+    self$training_mode <- TRUE
+
+    # Calculate total output dimension
+    data_dim <- sum(sapply(output_info, function(x) x[[1]]))
+
+    # Build the network
+    self$seq <- torch::nn_sequential()
+
+    dim <- noise_dim
+    i <- 1
+
+    for (neurons in hidden_units) {
+      self$seq$add_module(
+        module = torch::nn_linear(dim, neurons),
+        name = paste0("Linear_", i)
+      )
+      self$seq$add_module(
+        module = torch::nn_leaky_relu(0.2),
+        name = paste0("Activation_", i)
+      )
+      self$seq$add_module(
+        module = torch::nn_dropout(dropout_rate),
+        name = paste0("Dropout_", i)
+      )
+      dim <- neurons
+      i <- i + 1
+    }
+
+    # Output layer - no activation, will apply specific activations in forward
+    self$seq$add_module(
+      module = torch::nn_linear(dim, data_dim),
+      name = "Output"
+    )
+  },
+
+  forward = function(input, hard = NULL) {
+    # Get raw output from network
+    data <- self$seq(input)
+
+    # Apply appropriate activation to each output block
+    outputs <- list()
+    start_idx <- 1
+
+    for (info in self$output_info) {
+      dim <- info[[1]]
+      col_type <- info[[2]]
+      end_idx <- start_idx + dim - 1
+
+      # Slice the relevant columns (R uses 1-based indexing, torch uses 0-based)
+      col_data <- data[, start_idx:end_idx]
+
+      if (col_type == "softmax") {
+        # Apply Gumbel-Softmax for categorical columns
+        # Use hard=TRUE during inference (eval mode), soft during training
+        use_hard <- if (!is.null(hard)) hard else !self$training
+        col_data <- gumbel_softmax(col_data, tau = self$tau, hard = use_hard, dim = 2)
+      } else if (col_type == "linear") {
+        # For standard continuous columns, apply tanh to bound output
+        col_data <- torch::torch_tanh(col_data)
+      } else if (col_type == "mode_specific") {
+        # For mode-specific: first n-1 columns are mode indicators (softmax),
+        # last column is normalized value (tanh)
+        if (dim > 1) {
+          mode_logits <- col_data[, 1:(dim - 1)]
+          value <- col_data[, dim, drop = FALSE]
+
+          # Apply Gumbel-Softmax to mode indicators
+          use_hard <- if (!is.null(hard)) hard else !self$training
+          mode_probs <- gumbel_softmax(mode_logits, tau = self$tau, hard = use_hard, dim = 2)
+
+          # Apply tanh to value
+          value <- torch::torch_tanh(value)
+
+          col_data <- torch::torch_cat(list(mode_probs, value), dim = 2)
+        } else {
+          # Single column mode_specific (shouldn't happen, but handle gracefully)
+          col_data <- torch::torch_tanh(col_data)
+        }
+      }
+
+      outputs[[length(outputs) + 1]] <- col_data
+      start_idx <- end_idx + 1
+    }
+
+    # Concatenate all outputs
+    return(torch::torch_cat(outputs, dim = 2))
+  }
+)

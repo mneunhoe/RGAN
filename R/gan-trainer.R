@@ -38,6 +38,11 @@
 #' @param pac Number of samples to pack together for PacGAN (reduces mode collapse). The discriminator
 #'   sees `pac` samples concatenated together, helping it detect lack of diversity. Must divide batch_size
 #'   evenly. Defaults to 1 (standard GAN, no packing). Common values are 8 or 10.
+#' @param output_info Optional output structure from data_transformer$output_info. When provided,
+#'   enables Gumbel-Softmax for categorical columns, improving gradient flow for discrete variables.
+#'   Each element should be a list with (dimension, type) where type is "linear", "mode_specific", or "softmax".
+#' @param gumbel_tau Temperature for Gumbel-Softmax. Lower values (e.g., 0.2) produce more discrete
+#'   outputs. Only used when output_info is provided. Defaults to 0.2.
 #'
 #' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
@@ -94,7 +99,9 @@ gan_trainer <-
            lr_schedule = "constant",
            lr_decay_factor = 0.1,
            lr_decay_steps = 50,
-           pac = 1) {
+           pac = 1,
+           output_info = NULL,
+           gumbel_tau = 0.2) {
 # Set random seeds for reproducibility -----------------------------------------
     if (!is.null(seed)) {
       set.seed(seed)
@@ -134,6 +141,25 @@ gan_trainer <-
     }
     if (batch_size %% pac != 0) {
       stop(sprintf("batch_size (%d) must be divisible by pac (%d)", batch_size, pac))
+    }
+    if (gumbel_tau <= 0) {
+      stop("gumbel_tau must be a positive number")
+    }
+    # Validate output_info structure if provided
+    if (!is.null(output_info)) {
+      if (!is.list(output_info)) {
+        stop("output_info must be a list")
+      }
+      for (i in seq_along(output_info)) {
+        info <- output_info[[i]]
+        if (!is.list(info) || length(info) < 2) {
+          stop("Each element of output_info must be a list with at least 2 elements (dimension, type)")
+        }
+        valid_types <- c("linear", "softmax", "mode_specific")
+        if (!info[[2]] %in% valid_types) {
+          stop(sprintf("output_info type must be one of: %s", paste(valid_types, collapse = ", ")))
+        }
+      }
     }
 
     # Validate device availability
@@ -223,10 +249,19 @@ gan_trainer <-
 
 # Set up the neural networks if none are provided ------------------------------
     if (is.null(generator)) {
-      g_net <-
-        Generator(noise_dim = noise_dim,
-                  data_dim = data_dim,
-                  dropout_rate = 0.5)$to(device = device)
+      if (!is.null(output_info)) {
+        # Use TabularGenerator with Gumbel-Softmax when output_info is provided
+        g_net <-
+          TabularGenerator(noise_dim = noise_dim,
+                           output_info = output_info,
+                           dropout_rate = 0.5,
+                           tau = gumbel_tau)$to(device = device)
+      } else {
+        g_net <-
+          Generator(noise_dim = noise_dim,
+                    data_dim = data_dim,
+                    dropout_rate = 0.5)$to(device = device)
+      }
     } else {
       g_net <- generator
     }
@@ -511,7 +546,9 @@ gan_trainer <-
                       lr_schedule = lr_schedule,
                       lr_decay_factor = lr_decay_factor,
                       lr_decay_steps = lr_decay_steps,
-                      pac = pac)
+                      pac = pac,
+                      output_info = output_info,
+                      gumbel_tau = gumbel_tau)
     )
     class(output) <- "trained_RGAN"
     return(

@@ -158,6 +158,91 @@ forward = function(input) {
   )
 
 
+#' @title Self-Attention Layer for Tabular Data
+#'
+#' @description Multi-head self-attention layer that captures relationships between
+#'   features in the hidden representation. This allows the generator to learn
+#'   dependencies between different columns (e.g., age correlates with income).
+#'
+#' @param embed_dim The dimension of the input embeddings (hidden layer size)
+#' @param num_heads Number of attention heads. Must divide embed_dim evenly. Defaults to 4.
+#' @param dropout Dropout rate for attention weights. Defaults to 0.1.
+#'
+#' @return A torch::nn_module for self-attention
+#' @keywords internal
+SelfAttention <- torch::nn_module(
+  initialize = function(embed_dim, num_heads = 4, dropout = 0.1) {
+    # Ensure embed_dim is divisible by num_heads
+    if (embed_dim %% num_heads != 0) {
+      # Adjust num_heads to be a divisor of embed_dim
+      possible_heads <- c(1, 2, 4, 8, 16)
+      num_heads <- max(possible_heads[embed_dim %% possible_heads == 0])
+    }
+
+    self$embed_dim <- embed_dim
+    self$num_heads <- num_heads
+    self$head_dim <- embed_dim %/% num_heads
+
+    # Query, Key, Value projections
+    self$q_proj <- torch::nn_linear(embed_dim, embed_dim)
+    self$k_proj <- torch::nn_linear(embed_dim, embed_dim)
+    self$v_proj <- torch::nn_linear(embed_dim, embed_dim)
+
+    # Output projection
+    self$out_proj <- torch::nn_linear(embed_dim, embed_dim)
+
+    # Dropout
+    self$dropout <- torch::nn_dropout(dropout)
+
+    # Layer normalization for residual connection
+    self$layer_norm <- torch::nn_layer_norm(embed_dim)
+  },
+
+  forward = function(x) {
+    # x shape: (batch_size, embed_dim)
+    # For tabular data, we treat the hidden representation as a single "token"
+    # and apply self-attention across the feature dimension
+
+    batch_size <- x$shape[1]
+
+    # Store residual
+    residual <- x
+
+    # Reshape for multi-head attention: (batch, 1, embed_dim) -> treat as sequence of 1
+    # Actually for tabular, we can reshape features into groups
+    # Let's reshape (batch, embed_dim) -> (batch, num_heads, head_dim)
+    # and apply attention across head dimension
+
+    # Project to Q, K, V
+    q <- self$q_proj(x)$view(c(batch_size, self$num_heads, self$head_dim))
+    k <- self$k_proj(x)$view(c(batch_size, self$num_heads, self$head_dim))
+    v <- self$v_proj(x)$view(c(batch_size, self$num_heads, self$head_dim))
+
+    # Compute attention scores: (batch, num_heads, head_dim) @ (batch, head_dim, num_heads)
+    # -> (batch, num_heads, num_heads)
+    scale <- sqrt(self$head_dim)
+    attn_weights <- torch::torch_bmm(q, k$transpose(2, 3)) / scale
+    attn_weights <- torch::nnf_softmax(attn_weights, dim = -1)
+    attn_weights <- self$dropout(attn_weights)
+
+    # Apply attention to values
+    # (batch, num_heads, num_heads) @ (batch, num_heads, head_dim) -> (batch, num_heads, head_dim)
+    attn_output <- torch::torch_bmm(attn_weights, v)
+
+    # Reshape back: (batch, num_heads, head_dim) -> (batch, embed_dim)
+    attn_output <- attn_output$view(c(batch_size, self$embed_dim))
+
+    # Output projection
+    attn_output <- self$out_proj(attn_output)
+
+    # Residual connection and layer norm
+    output <- self$layer_norm(residual + attn_output)
+
+    return(output)
+  }
+)
+
+
 #' @title Residual Block for Generator
 #'
 #' @description A residual block with configurable normalization and activation.
@@ -251,6 +336,8 @@ ResidualBlock <- torch::nn_module(
 #'     \item \strong{Layer Normalization:} Alternative that works better with small batches
 #'     \item \strong{Multiple activation functions:} ReLU, LeakyReLU, GELU, SiLU
 #'     \item \strong{Weight initialization:} Xavier or Kaiming initialization
+#'     \item \strong{Self-Attention:} Captures relationships between features
+#'     \item \strong{Progressive Training:} Gradually increase network capacity
 #'   }
 #'
 #' @param noise_dim The length of the noise vector per example
@@ -271,6 +358,13 @@ ResidualBlock <- torch::nn_module(
 #'   preferred for networks with tanh/sigmoid outputs.
 #' @param residual Enable residual connections between layers of the same width.
 #'   Defaults to TRUE.
+#' @param attention Enable self-attention layers after residual blocks. Can be TRUE (add
+#'   attention after each block), FALSE (no attention), or a vector of layer indices
+#'   where attention should be added (e.g., c(2, 4) adds attention after blocks 2 and 4).
+#'   Defaults to FALSE.
+#' @param attention_heads Number of attention heads. Must divide hidden layer size evenly.
+#'   Defaults to 4.
+#' @param attention_dropout Dropout rate for attention weights. Defaults to 0.1.
 #'
 #' @return A torch::nn_module for the Tabular Generator
 #' @export
@@ -280,6 +374,15 @@ ResidualBlock <- torch::nn_module(
 #' # Basic usage with CTGAN-style defaults
 #' output_info <- list(list(1, "linear"), list(3, "softmax"))
 #' gen <- TabularGenerator(noise_dim = 128, output_info = output_info)
+#'
+#' # With self-attention for capturing feature relationships
+#' gen <- TabularGenerator(
+#'   noise_dim = 128,
+#'   output_info = output_info,
+#'   hidden_units = list(256, 256, 256),
+#'   attention = TRUE,
+#'   attention_heads = 8
+#' )
 #'
 #' # Custom architecture with layer normalization and GELU
 #' gen <- TabularGenerator(
@@ -300,7 +403,10 @@ TabularGenerator <- torch::nn_module(
                         normalization = "batch",
                         activation = "relu",
                         init_method = "xavier_uniform",
-                        residual = TRUE) {
+                        residual = TRUE,
+                        attention = FALSE,
+                        attention_heads = 4,
+                        attention_dropout = 0.1) {
 
     # Store parameters for forward pass
     self$output_info <- output_info
@@ -309,6 +415,20 @@ TabularGenerator <- torch::nn_module(
     self$normalization <- normalization
     self$activation <- activation
     self$residual <- residual
+    self$use_attention <- !isFALSE(attention)
+
+    # For progressive training: track which blocks are active
+    self$num_blocks <- length(hidden_units)
+    self$active_blocks <- self$num_blocks  # All blocks active by default
+
+    # Determine which layers get attention
+    if (isTRUE(attention)) {
+      self$attention_layers <- seq_along(hidden_units)
+    } else if (is.numeric(attention)) {
+      self$attention_layers <- attention
+    } else {
+      self$attention_layers <- integer(0)
+    }
 
     # Validate parameters
     valid_norms <- c("batch", "layer", "none")
@@ -326,11 +446,15 @@ TabularGenerator <- torch::nn_module(
 
     # Calculate total output dimension
     data_dim <- sum(sapply(output_info, function(x) x[[1]]))
+    self$data_dim <- data_dim
 
     # Build the network with residual blocks
     self$blocks <- torch::nn_module_list()
+    self$attention_blocks <- torch::nn_module_list()
+    self$attention_block_indices <- list()  # Maps block index to attention block index
 
     dim <- noise_dim
+    attn_idx <- 1
     for (i in seq_along(hidden_units)) {
       neurons <- hidden_units[[i]]
 
@@ -349,8 +473,24 @@ TabularGenerator <- torch::nn_module(
       }
 
       self$blocks$append(block)
+
+      # Add attention layer if specified for this block
+      if (i %in% self$attention_layers) {
+        attn <- SelfAttention(
+          embed_dim = neurons,
+          num_heads = attention_heads,
+          dropout = attention_dropout
+        )
+        self$attention_blocks$append(attn)
+        self$attention_block_indices[[as.character(i)]] <- attn_idx
+        attn_idx <- attn_idx + 1
+      }
+
       dim <- neurons
     }
+
+    # Store final hidden dimension for progressive training
+    self$final_hidden_dim <- dim
 
     # Output layer - no activation, will apply specific activations in forward
     self$output_layer <- torch::nn_linear(dim, data_dim)
@@ -373,10 +513,19 @@ TabularGenerator <- torch::nn_module(
   },
 
   forward = function(input, hard = NULL) {
-    # Pass through residual blocks
+    # Pass through residual blocks (with progressive training support)
     data <- input
-    for (i in seq_along(self$blocks)) {
+    num_active <- min(self$active_blocks, length(self$blocks))
+
+    for (i in seq_len(num_active)) {
+      # Apply residual block
       data <- self$blocks[[i]](data)
+
+      # Apply attention if defined for this block
+      attn_idx <- self$attention_block_indices[[as.character(i)]]
+      if (!is.null(attn_idx)) {
+        data <- self$attention_blocks[[attn_idx]](data)
+      }
     }
 
     # Output layer
@@ -424,5 +573,20 @@ TabularGenerator <- torch::nn_module(
 
     # Concatenate all outputs
     return(torch::torch_cat(outputs, dim = 2))
+  },
+
+  #' Set number of active blocks for progressive training
+  #' @param n Number of blocks to activate (1 to num_blocks)
+  set_active_blocks = function(n) {
+    if (n < 1 || n > self$num_blocks) {
+      stop(sprintf("n must be between 1 and %d", self$num_blocks))
+    }
+    self$active_blocks <- n
+    invisible(self)
+  },
+
+  #' Get current number of active blocks
+  get_active_blocks = function() {
+    return(self$active_blocks)
   }
 )

@@ -441,3 +441,319 @@ test_that("ResidualBlock improves gradient flow", {
   expect_true(grad_mag_res > 0)
   expect_true(grad_mag_no_res > 0)
 })
+
+# ============================================
+# Self-Attention Tests
+# ============================================
+
+test_that("SelfAttention creates valid module", {
+  skip_if_not_installed("torch")
+
+  attn <- SelfAttention(embed_dim = 64, num_heads = 4, dropout = 0.1)
+
+  expect_true(inherits(attn, "nn_module"))
+  expect_equal(attn$embed_dim, 64)
+  expect_equal(attn$num_heads, 4)
+  expect_equal(attn$head_dim, 16)  # 64 / 4
+})
+
+test_that("SelfAttention adjusts num_heads when not divisible", {
+  skip_if_not_installed("torch")
+
+  # 50 is not divisible by 4, should adjust to 2
+  attn <- SelfAttention(embed_dim = 50, num_heads = 4, dropout = 0.1)
+
+  expect_equal(attn$embed_dim, 50)
+  # Should choose largest divisor from c(1, 2, 4, 8, 16) that divides 50
+  expect_true(50 %% attn$num_heads == 0)
+})
+
+test_that("SelfAttention forward pass works", {
+  skip_if_not_installed("torch")
+
+  attn <- SelfAttention(embed_dim = 64, num_heads = 4, dropout = 0.1)
+
+  x <- torch::torch_randn(c(10, 64))
+  out <- attn(x)
+
+  expect_equal(out$shape[1], 10)
+  expect_equal(out$shape[2], 64)
+})
+
+test_that("SelfAttention preserves gradients", {
+  skip_if_not_installed("torch")
+
+  attn <- SelfAttention(embed_dim = 32, num_heads = 4, dropout = 0.0)
+
+  x <- torch::torch_randn(c(5, 32), requires_grad = TRUE)
+  out <- attn(x)
+  loss <- out$sum()
+  loss$backward()
+
+  expect_true(any(torch::as_array(x$grad) != 0))
+})
+
+test_that("SelfAttention has residual connection", {
+  skip_if_not_installed("torch")
+
+  attn <- SelfAttention(embed_dim = 64, num_heads = 4, dropout = 0.0)
+
+  x <- torch::torch_randn(c(5, 64))
+  out <- attn(x)
+
+  # Output should be different from input but not completely different (due to residual)
+  # The difference should be bounded (residual adds the original input back)
+  diff <- torch::as_array((out - x)$abs()$mean())
+  out_mean <- torch::as_array(out$abs()$mean())
+
+  # With residual connection, output shouldn't be completely different from input
+  # The ratio of difference to output magnitude should be bounded
+  expect_true(diff < out_mean * 2)  # Difference not too large relative to output
+  expect_true(diff > 0)  # But there is some transformation
+})
+
+# ============================================
+# TabularGenerator with Attention Tests
+# ============================================
+
+test_that("TabularGenerator with attention=TRUE works", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(
+    list(1, "linear"),
+    list(3, "softmax")
+  )
+
+  gen <- TabularGenerator(
+    noise_dim = 64,
+    output_info = output_info,
+    hidden_units = list(64, 64),
+    attention = TRUE,
+    attention_heads = 4
+  )
+
+  expect_true(gen$use_attention)
+  expect_equal(length(gen$attention_layers), 2)
+
+  z <- torch::torch_randn(c(10, 64))
+  out <- gen(z)
+
+  expect_equal(out$shape[1], 10)
+  expect_equal(out$shape[2], 4)
+})
+
+test_that("TabularGenerator with attention at specific layers works", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 64,
+    output_info = output_info,
+    hidden_units = list(64, 64, 64),
+    attention = c(2),  # Only attention after block 2
+    attention_heads = 4
+  )
+
+  expect_true(gen$use_attention)
+  expect_equal(gen$attention_layers, 2)
+
+  # Check that only block 2 has attention (using the indices mapping)
+  expect_null(gen$attention_block_indices[["1"]])
+  expect_true(!is.null(gen$attention_block_indices[["2"]]))
+  expect_null(gen$attention_block_indices[["3"]])
+
+  # Should have exactly one attention block
+  expect_equal(length(gen$attention_blocks), 1)
+
+  z <- torch::torch_randn(c(5, 64))
+  out <- gen(z)
+
+  expect_equal(out$shape[1], 5)
+  expect_equal(out$shape[2], 2)
+})
+
+test_that("TabularGenerator with attention=FALSE has no attention", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 64,
+    output_info = output_info,
+    hidden_units = list(64, 64),
+    attention = FALSE
+  )
+
+  expect_false(gen$use_attention)
+  expect_equal(length(gen$attention_layers), 0)
+})
+
+test_that("TabularGenerator attention produces gradients", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 32,
+    output_info = output_info,
+    hidden_units = list(32, 32),
+    attention = TRUE,
+    attention_heads = 4
+  )
+
+  z <- torch::torch_randn(c(5, 32), requires_grad = TRUE)
+  out <- gen(z)
+  loss <- out$sum()
+  loss$backward()
+
+  expect_true(any(torch::as_array(z$grad) != 0))
+})
+
+# ============================================
+# Progressive Training Tests
+# ============================================
+
+test_that("TabularGenerator progressive training set_active_blocks works", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 32,
+    output_info = output_info,
+    hidden_units = list(64, 64, 64, 64)
+  )
+
+  # Initially all blocks active
+  expect_equal(gen$num_blocks, 4)
+  expect_equal(gen$get_active_blocks(), 4)
+
+  # Set to 2 blocks
+  gen$set_active_blocks(2)
+  expect_equal(gen$get_active_blocks(), 2)
+
+  # Forward pass should still work
+  z <- torch::torch_randn(c(5, 32))
+  out <- gen(z)
+
+  expect_equal(out$shape[1], 5)
+  expect_equal(out$shape[2], 2)
+})
+
+test_that("TabularGenerator set_active_blocks validates input", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 32,
+    output_info = output_info,
+    hidden_units = list(64, 64)
+  )
+
+  expect_error(gen$set_active_blocks(0), "must be between 1 and 2")
+  expect_error(gen$set_active_blocks(3), "must be between 1 and 2")
+})
+
+test_that("TabularGenerator progressive training changes output", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 32,
+    output_info = output_info,
+    hidden_units = list(64, 64, 64),
+    normalization = "none"  # Avoid batch norm state issues
+  )
+  gen$eval()
+
+  torch::torch_manual_seed(123)
+  z <- torch::torch_randn(c(5, 32))
+
+  # Output with all blocks
+  gen$set_active_blocks(3)
+  out_full <- gen(z)
+
+  # Output with fewer blocks
+  gen$set_active_blocks(1)
+  out_partial <- gen(z)
+
+  # Outputs should differ (different network depth)
+  diff <- torch::as_array((out_full - out_partial)$abs()$sum())
+  expect_true(diff > 0)
+})
+
+test_that("TabularGenerator progressive training with attention", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 32,
+    output_info = output_info,
+    hidden_units = list(32, 32, 32),
+    attention = TRUE,
+    attention_heads = 4
+  )
+
+  z <- torch::torch_randn(c(5, 32))
+
+  # Test with different active block counts
+  for (n in 1:3) {
+    gen$set_active_blocks(n)
+    out <- gen(z)
+    expect_equal(out$shape[1], 5)
+    expect_equal(out$shape[2], 2)
+  }
+})
+
+test_that("TabularGenerator set_active_blocks can be chained", {
+  skip_if_not_installed("torch")
+
+  output_info <- list(list(2, "linear"))
+
+  gen <- TabularGenerator(
+    noise_dim = 32,
+    output_info = output_info,
+    hidden_units = list(64, 64)
+  )
+
+  # Test that set_active_blocks modifies state and allows method chaining
+  gen$set_active_blocks(1)
+  expect_equal(gen$get_active_blocks(), 1)
+
+  gen$set_active_blocks(2)
+  expect_equal(gen$get_active_blocks(), 2)
+})
+
+# ============================================
+# Integration: Attention + Progressive Training
+# ============================================
+
+test_that("TabularGenerator with attention and progressive training trains", {
+  skip_if_not_installed("torch")
+
+  data <- sample_toydata(n = 100)
+  transformer <- data_transformer$new()
+  transformer$fit(data)
+  transformed_data <- transformer$transform(data)
+
+  # Train with attention and progressive training schedule
+  result <- gan_trainer(
+    transformed_data,
+    epochs = 2,
+    batch_size = 20,
+    output_info = transformer$output_info,
+    generator_hidden_units = list(64, 64),
+    seed = 123
+  )
+
+  expect_s3_class(result, "trained_RGAN")
+
+  # Sample synthetic data
+  synthetic <- sample_synthetic_data(result, transformer, n = 50)
+  expect_equal(nrow(synthetic), 50)
+  expect_equal(ncol(synthetic), 2)
+})

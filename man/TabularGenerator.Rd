@@ -13,7 +13,10 @@ TabularGenerator(
   normalization = "batch",
   activation = "relu",
   init_method = "xavier_uniform",
-  residual = TRUE
+  residual = TRUE,
+  attention = FALSE,
+  attention_heads = 4,
+  attention_dropout = 0.1
 )
 }
 \arguments{
@@ -43,6 +46,19 @@ preferred for networks with tanh/sigmoid outputs.}
 
 \item{residual}{Enable residual connections between layers of the same width.
 Defaults to TRUE.}
+
+\item{attention}{Enable self-attention layers after residual blocks. Can be TRUE (add
+attention after each block), FALSE (no attention), or a vector of layer indices
+where attention should be added (e.g., c(2, 4) adds attention after blocks 2 and 4).
+Defaults to FALSE.}
+
+\item{attention_heads}{Number of attention heads. Must divide hidden layer size evenly.
+Defaults to 4.}
+
+\item{attention_dropout}{Dropout rate for attention weights. Defaults to 0.1.}
+
+\item{n}{Number of blocks to activate (1 to num_blocks)
+Get current number of active blocks}
 }
 \value{
 A torch::nn_module for the Tabular Generator
@@ -61,6 +77,8 @@ in deeper networks (enabled by default when consecutive layers have same width)
 \item \strong{Layer Normalization:} Alternative that works better with small batches
 \item \strong{Multiple activation functions:} ReLU, LeakyReLU, GELU, SiLU
 \item \strong{Weight initialization:} Xavier or Kaiming initialization
+\item \strong{Self-Attention:} Captures relationships between features
+\item \strong{Progressive Training:} Gradually increase network capacity
 }
 }
 \examples{
@@ -68,6 +86,15 @@ in deeper networks (enabled by default when consecutive layers have same width)
 # Basic usage with CTGAN-style defaults
 output_info <- list(list(1, "linear"), list(3, "softmax"))
 gen <- TabularGenerator(noise_dim = 128, output_info = output_info)
+
+# With self-attention for capturing feature relationships
+gen <- TabularGenerator(
+  noise_dim = 128,
+  output_info = output_info,
+  hidden_units = list(256, 256, 256),
+  attention = TRUE,
+  attention_heads = 8
+)
 
 # Custom architecture with layer normalization and GELU
 gen <- TabularGenerator(
@@ -79,4 +106,5 @@ gen <- TabularGenerator(
   init_method = "kaiming_uniform"
 )
 }
+Set number of active blocks for progressive training
 }

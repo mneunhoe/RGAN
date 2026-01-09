@@ -24,6 +24,7 @@
 #' @param track_loss Store the training losses as additional output. Defaults to FALSE.
 #' @param plot_loss Monitor the losses during training with plots. Defaults to FALSE.
 #' @param device Input on which device (e.g. "cpu", "cuda", or "mps") training should be done. Defaults to "cpu".
+#' @param seed Optional seed for reproducibility. Sets both R's random seed and torch's random seed. Defaults to NULL (no seed).
 #'
 #' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
@@ -71,7 +72,14 @@ gan_trainer <-
            plot_dimensions = c(1, 2),
            track_loss = FALSE,
            plot_loss = FALSE,
-           device = "cpu") {
+           device = "cpu",
+           seed = NULL) {
+# Set random seeds for reproducibility -----------------------------------------
+    if (!is.null(seed)) {
+      set.seed(seed)
+      torch::torch_manual_seed(seed)
+    }
+
 # Check if data is in the correct format ---------------------------------------
     !(any(
       c("dataset", "matrix", "array", "torch_tensor") %in% class(data)

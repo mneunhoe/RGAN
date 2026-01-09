@@ -102,7 +102,7 @@ data_transformer <- R6::R6Class(
         }
         self$output_info[[length(self$output_info) + 1]] <-
           meta$output_info
-        self$ouput_dimensions <-
+        self$output_dimensions <-
           self$output_dimensions + meta$output_dimensions
         self$meta[[length(self$meta) + 1]] <- meta
       }

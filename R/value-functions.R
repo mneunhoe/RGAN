@@ -8,7 +8,11 @@
 #'
 #' @return The function returns a named list with the entries d_loss and g_loss
 #' @export
-GAN_value_fct <- function(real_scores, fake_scores) {
+GAN_value_fct <- function(real_scores, fake_scores, epsilon = 1e-7) {
+  # Clamp scores to avoid log(0) and log(1) numerical instability
+  real_scores <- torch::torch_clamp(real_scores, epsilon, 1 - epsilon)
+  fake_scores <- torch::torch_clamp(fake_scores, epsilon, 1 - epsilon)
+
   d_loss <-
     torch::torch_log(real_scores) + torch::torch_log(1 - fake_scores)
   d_loss <- -d_loss$mean()

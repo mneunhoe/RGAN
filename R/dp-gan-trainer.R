@@ -235,6 +235,23 @@ dp_gan_trainer <- function(
     target_delta = target_delta
   )
 
+  # Pre-calculate maximum steps before privacy budget is exhausted
+  # This avoids computing epsilon at every step
+  max_steps <- compute_max_steps(
+    target_epsilon = target_epsilon,
+    target_delta = target_delta,
+    sampling_rate = sampling_rate,
+    noise_multiplier = noise_multiplier
+  )
+
+  total_planned_steps <- epochs * steps_per_epoch
+  if (max_steps < total_planned_steps && verbose) {
+    cli::cli_alert_info(sprintf(
+      "Privacy budget allows %d steps (planned: %d). Training will stop early.",
+      max_steps, total_planned_steps
+    ))
+  }
+
   # Set up neural networks
   if (is.null(generator)) {
     g_net <- Generator(
@@ -296,15 +313,14 @@ dp_gan_trainer <- function(
         noise_multiplier = noise_multiplier
       )
 
-      # Update privacy accountant
+      # Update step counter
       accountant$step()
 
-      # Check if privacy budget exhausted
-      current_epsilon <- accountant$get_epsilon()
-      if (current_epsilon > target_epsilon) {
+      # Check if privacy budget exhausted (using pre-calculated max_steps)
+      if (accountant$steps >= max_steps) {
         cli::cli_alert_warning(sprintf(
-          "Privacy budget exhausted at epoch %d, step %d. Final epsilon = %.4f",
-          epoch, step, current_epsilon
+          "Privacy budget exhausted at epoch %d, step %d (max_steps = %d).",
+          epoch, step, max_steps
         ))
         break
       }
@@ -353,15 +369,16 @@ dp_gan_trainer <- function(
     }
 
     # Check if privacy budget exhausted
-    if (current_epsilon > target_epsilon) {
+    if (accountant$steps >= max_steps) {
       break
     }
 
-    # Print privacy status
+    # Print privacy status (compute epsilon only for verbose output)
     if (verbose && epoch %% 10 == 0) {
+      current_epsilon <- accountant$get_epsilon()
       cli::cli_alert_info(sprintf(
-        "Epoch %d/%d - Current epsilon: %.4f / %.4f",
-        epoch, epochs, current_epsilon, target_epsilon
+        "Epoch %d/%d - Steps: %d/%d - Current epsilon: %.4f",
+        epoch, epochs, accountant$steps, max_steps, current_epsilon
       ))
     }
   }
@@ -830,4 +847,83 @@ calibrate_noise_multiplier <- function(
   }
 
   return(mid)
+}
+
+
+#' @title Compute Maximum Steps for Privacy Budget
+#'
+#' @description Find the maximum number of training steps that keeps epsilon
+#'   at or below the target using binary search. This allows pre-computing
+#'   when training must stop, avoiding per-step epsilon computation.
+#'
+#' @param target_epsilon Target epsilon for differential privacy
+#' @param target_delta Target delta for differential privacy
+#' @param sampling_rate Poisson sampling probability
+#' @param noise_multiplier Gaussian noise multiplier
+#' @param max_steps_search Upper bound for binary search. Defaults to 1000000.
+#'
+#' @return Maximum number of steps that keeps epsilon <= target_epsilon
+#'
+#' @keywords internal
+compute_max_steps <- function(
+    target_epsilon,
+    target_delta,
+    sampling_rate,
+    noise_multiplier,
+    max_steps_search = 1000000
+) {
+  # First check if even 1 step exceeds the budget
+  accountant <- dp_accountant_poisson$new(
+    sampling_rate = sampling_rate,
+    noise_multiplier = noise_multiplier,
+    target_delta = target_delta
+  )
+  accountant$step(1)
+  if (accountant$get_epsilon() > target_epsilon) {
+    # Even 1 step exceeds budget - return 0
+    return(0)
+  }
+
+  # Check if max_steps_search is within budget
+  accountant <- dp_accountant_poisson$new(
+    sampling_rate = sampling_rate,
+    noise_multiplier = noise_multiplier,
+    target_delta = target_delta
+  )
+  accountant$step(max_steps_search)
+  if (accountant$get_epsilon() <= target_epsilon) {
+    return(max_steps_search)
+  }
+
+  # Binary search for maximum steps
+  low <- 1
+  high <- max_steps_search
+
+  for (iter in 1:50) {
+    mid <- floor((low + high) / 2)
+
+    accountant <- dp_accountant_poisson$new(
+      sampling_rate = sampling_rate,
+      noise_multiplier = noise_multiplier,
+      target_delta = target_delta
+    )
+    accountant$step(mid)
+    eps <- accountant$get_epsilon()
+
+    if (eps <= target_epsilon) {
+      # Can do more steps
+      low <- mid
+    } else {
+      # Need fewer steps
+      high <- mid
+    }
+
+    # Converged
+    if (high - low <= 1) {
+      break
+    }
+  }
+
+  # Return low (the last value that was <= target_epsilon)
+  return(low)
 }

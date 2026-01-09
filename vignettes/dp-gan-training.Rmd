@@ -124,10 +124,6 @@ cat("Transformed data shape:", dim(transformed_data), "\n")
 Train a GAN with a target privacy budget of ε = 1:
 
 ```{r dp-training-basic}
-# Enable OpenDP contrib features
-
-opendp::enable_features("contrib")
-
 # Train with differential privacy
 dp_gan <- dp_gan_trainer(
   data = transformed_data,

@@ -156,6 +156,67 @@ test_that("calibrate_noise_multiplier: tighter epsilon needs more noise", {
   expect_true(noise_tight > noise_loose)
 })
 
+test_that("compute_max_steps finds correct maximum", {
+  # Use parameters that allow multiple steps
+  max_steps <- compute_max_steps(
+    target_epsilon = 10.0,
+    target_delta = 1e-5,
+    sampling_rate = 0.01,
+    noise_multiplier = 1.0
+  )
+
+  expect_true(max_steps > 0)
+
+  # Verify that max_steps is indeed the maximum
+  accountant_at_max <- dp_accountant_poisson$new(
+    sampling_rate = 0.01,
+    noise_multiplier = 1.0,
+    target_delta = 1e-5
+  )
+  accountant_at_max$step(max_steps)
+  expect_true(accountant_at_max$get_epsilon() <= 10.0)
+
+  # One more step should exceed budget
+  accountant_over <- dp_accountant_poisson$new(
+    sampling_rate = 0.01,
+    noise_multiplier = 1.0,
+    target_delta = 1e-5
+  )
+  accountant_over$step(max_steps + 1)
+  expect_true(accountant_over$get_epsilon() > 10.0)
+})
+
+test_that("compute_max_steps: more noise allows more steps", {
+  # Use epsilon=10 to allow meaningful comparison
+  max_steps_low_noise <- compute_max_steps(
+    target_epsilon = 10.0,
+    target_delta = 1e-5,
+    sampling_rate = 0.01,
+    noise_multiplier = 0.5
+  )
+
+  max_steps_high_noise <- compute_max_steps(
+    target_epsilon = 10.0,
+    target_delta = 1e-5,
+    sampling_rate = 0.01,
+    noise_multiplier = 2.0
+  )
+
+  expect_true(max_steps_high_noise > max_steps_low_noise)
+})
+
+test_that("compute_max_steps returns 0 when budget immediately exhausted", {
+  # Use very tight epsilon that can't accommodate even 1 step
+  max_steps <- compute_max_steps(
+    target_epsilon = 0.01,
+    target_delta = 1e-5,
+    sampling_rate = 0.1,
+    noise_multiplier = 0.1
+  )
+
+  expect_equal(max_steps, 0)
+})
+
 test_that("secure_poisson_subsample returns valid indices", {
   skip_if_no_opendp()
 

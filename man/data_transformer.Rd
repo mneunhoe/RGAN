@@ -12,10 +12,18 @@ Method \verb{$new()} initializes a new transformer, method \verb{$fit(data)} lea
 the parameters for the transformation from data (e.g. means and sds).
 Methods \verb{$transform()} and \verb{$inverse_transform()} can be used to transform
 and back transform a data set based on the learned parameters.
-Currently, DataTransformer supports z-transformation (a.k.a. normalization)
-for numerical features/variables and one hot encoding for categorical
-features/variables. In your call to fit you just need to indicate which
-columns contain discrete features.
+
+DataTransformer supports two normalization methods for continuous columns:
+\itemize{
+\item \strong{Standard (default):} z-transformation using mean and standard deviation.
+\item \strong{Mode-specific:} Fits a Gaussian Mixture Model (GMM) to handle
+multi-modal distributions. Each value is normalized within its assigned mode,
+and a mode indicator is included. This is the approach used by CTGAN and
+significantly improves GAN performance on columns with skewed or multi-modal
+distributions.
+}
+
+Categorical features are one-hot encoded.
 }
 \examples{
 \dontrun{
@@ -25,10 +33,16 @@ torch::install_torch()
 data <- sample_toydata()
 # Build new transformer
 transformer <- data_transformer$new()
-# Fit transformer to data
+# Fit transformer to data (standard normalization)
 transformer$fit(data)
 # Transform data and store as new object
 transformed_data <-  transformer$transform(data)
+
+# Or use mode-specific normalization for better handling of multi-modal data
+transformer_gmm <- data_transformer$new()
+transformer_gmm$fit(data, mode_specific = TRUE, n_modes = 10)
+transformed_data_gmm <- transformer_gmm$transform(data)
+
 # Train the default GAN
 trained_gan <- gan_trainer(transformed_data)
 # Sample synthetic data from the trained GAN
@@ -46,6 +60,8 @@ main = "Real and Synthetic Data after Training")
 data <- sample_toydata()
 transformer <- data_transformer$new()
 transformer$fit(data)
+# Or with mode-specific normalization
+transformer$fit(data, mode_specific = TRUE, n_modes = 10)
 
 ## ------------------------------------------------
 ## Method `data_transformer$transform`
@@ -65,6 +81,7 @@ transformer <- data_transformer$new()
 transformer$fit(data)
 transformed_data <- transformer$transform(data)
 reconstructed_data <- transformer$inverse_transform(transformed_data)
+Fit a Gaussian Mixture Model using EM algorithm
 }
 \section{Methods}{
 \subsection{Public methods}{
@@ -97,7 +114,12 @@ Create a new data_transformer object
 \if{latex}{\out{\hypertarget{method-data_transformer-fit_continuous}{}}}
 \subsection{Method \code{fit_continuous()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_continuous(column = NULL, data = NULL)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_continuous(
+  column = NULL,
+  data = NULL,
+  mode_specific = FALSE,
+  n_modes = 10
+)}\if{html}{\out{</div>}}
 }
 
 }
@@ -116,7 +138,12 @@ Create a new data_transformer object
 \subsection{Method \code{fit()}}{
 Fit a data_transformer to data.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit(data, discrete_columns = NULL)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit(
+  data,
+  discrete_columns = NULL,
+  mode_specific = FALSE,
+  n_modes = 10
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -125,6 +152,12 @@ Fit a data_transformer to data.
 \item{\code{data}}{The data set to transform}
 
 \item{\code{discrete_columns}}{Column ids for columns with discrete/nominal values to be one hot encoded.}
+
+\item{\code{mode_specific}}{If TRUE, use mode-specific normalization (GMM) for continuous columns.
+This helps with multi-modal distributions. Defaults to FALSE.}
+
+\item{\code{n_modes}}{Number of modes (Gaussian components) to fit for mode-specific normalization.
+Defaults to 10. Only used when mode_specific = TRUE.}
 }
 \if{html}{\out{</div>}}
 }
@@ -133,6 +166,8 @@ Fit a data_transformer to data.
 \preformatted{data <- sample_toydata()
 transformer <- data_transformer$new()
 transformer$fit(data)
+# Or with mode-specific normalization
+transformer$fit(data, mode_specific = TRUE, n_modes = 10)
 }
 \if{html}{\out{</div>}}
 
@@ -226,6 +261,7 @@ transformer <- data_transformer$new()
 transformer$fit(data)
 transformed_data <- transformer$transform(data)
 reconstructed_data <- transformer$inverse_transform(transformed_data)
+Fit a Gaussian Mixture Model using EM algorithm
 }
 \if{html}{\out{</div>}}
 

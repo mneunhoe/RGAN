@@ -111,7 +111,7 @@ test_that("WGAN_weight_clipper clips weights correctly", {
   d_net <- Discriminator(data_dim = 2, hidden_units = list(8), dropout_rate = 0)
 
   # Set some weights to extreme values
-  with(torch::no_grad(), {
+  torch::with_no_grad({
     d_net$parameters$Linear_1.weight$fill_(10)
   })
 

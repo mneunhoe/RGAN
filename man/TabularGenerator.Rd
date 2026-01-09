@@ -56,8 +56,6 @@ Defaults to FALSE.}
 Defaults to 4.}
 
 \item{attention_dropout}{Dropout rate for attention weights. Defaults to 0.1.}
-
-\item{n}{Number of blocks to activate (1 to num_blocks)}
 }
 \value{
 A torch::nn_module for the Tabular Generator
@@ -79,10 +77,6 @@ in deeper networks (enabled by default when consecutive layers have same width)
 \item \strong{Self-Attention:} Captures relationships between features
 \item \strong{Progressive Training:} Gradually increase network capacity
 }
-
-Set number of active blocks for progressive training
-
-Get current number of active blocks
 }
 \examples{
 \dontrun{

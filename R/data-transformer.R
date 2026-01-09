@@ -555,10 +555,10 @@ data_transformer <- R6::R6Class(
     }
   ),
   private = list(
-    #' Fit a Gaussian Mixture Model using EM algorithm
-    #' @param data Numeric vector of data points
-    #' @param n_modes Maximum number of modes to fit
-    #' @return List with means, stds, weights, and actual n_modes used
+    # Fit a Gaussian Mixture Model using EM algorithm
+    # @param data Numeric vector of data points
+    # @param n_modes Maximum number of modes to fit
+    # @return List with means, stds, weights, and actual n_modes used
     fit_gmm = function(data, n_modes) {
       data <- data[!is.na(data)]
       n <- length(data)

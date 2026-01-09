@@ -589,8 +589,7 @@ TabularGenerator <- torch::nn_module(
     return(torch::torch_cat(outputs, dim = 2))
   },
 
-  #' @description Set number of active blocks for progressive training
-  #' @param n Number of blocks to activate (1 to num_blocks)
+  # Set number of active blocks for progressive training (1 to num_blocks)
   set_active_blocks = function(n) {
     if (n < 1 || n > self$num_blocks) {
       stop(sprintf("n must be between 1 and %d", self$num_blocks))
@@ -599,7 +598,7 @@ TabularGenerator <- torch::nn_module(
     invisible(self)
   },
 
-  #' @description Get current number of active blocks
+  # Get current number of active blocks
   get_active_blocks = function() {
     return(self$active_blocks)
   }

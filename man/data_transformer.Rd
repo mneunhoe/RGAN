@@ -233,7 +233,6 @@ reconstructed_data <- transformer$inverse_transform(transformed_data)
 # Use with GAN output
 # synthetic_raw <- trained_gan$generator(noise)
 # synthetic_data <- transformer$inverse_transform(as_array(synthetic_raw))
-Fit a Gaussian Mixture Model using EM algorithm
 }
 \references{
 Xu, L., Skoularidou, M., Cuesta-Infante, A., & Veeramachaneni, K. (2019).
@@ -548,7 +547,6 @@ reconstructed_data <- transformer$inverse_transform(transformed_data)
 # Use with GAN output
 # synthetic_raw <- trained_gan$generator(noise)
 # synthetic_data <- transformer$inverse_transform(as_array(synthetic_raw))
-Fit a Gaussian Mixture Model using EM algorithm
 }
 \if{html}{\out{</div>}}
 

@@ -430,7 +430,9 @@ dp_gan_trainer <- function(
       epochs = epochs,
       target_epsilon = target_epsilon,
       target_delta = target_delta,
-      device = device
+      device = device,
+      eval_dropout = eval_dropout,
+      synthetic_examples = synthetic_examples
     )
   )
   class(output) <- "trained_RGAN"

@@ -264,3 +264,64 @@ test_that("print.trained_RGAN does not show pac when = 1", {
   output <- capture.output(print(result))
   expect_false(any(grepl("PacGAN", output)))
 })
+
+test_that("PacGAN works with validation data and early stopping", {
+  skip_if_not_installed("torch")
+
+  data <- sample_toydata(n = 200)
+  transformer <- data_transformer$new()
+  transformer$fit(data)
+  transformed_data <- transformer$transform(data)
+
+  # Split into train/validation
+  train_data <- transformed_data[1:160, ]
+  val_data <- transformed_data[161:200, ]
+
+  # Test PacGAN with validation data
+  result <- gan_trainer(
+    train_data,
+    epochs = 3,
+    batch_size = 20,
+    pac = 10,
+    validation_data = val_data,
+    early_stopping = TRUE,
+    patience = 5,
+    seed = 123
+  )
+
+  expect_s3_class(result, "trained_RGAN")
+  expect_equal(result$settings$pac, 10)
+})
+
+test_that("PacGAN works with TabularGenerator and validation", {
+  skip_if_not_installed("torch")
+
+  data <- sample_toydata(n = 200)
+  transformer <- data_transformer$new()
+  transformer$fit(data)
+  transformed_data <- transformer$transform(data)
+
+  # Split into train/validation
+  train_data <- transformed_data[1:160, ]
+  val_data <- transformed_data[161:200, ]
+
+  # Test PacGAN with TabularGenerator (output_info) and validation
+  result <- gan_trainer(
+    train_data,
+    epochs = 3,
+    batch_size = 20,
+    pac = 10,
+    output_info = transformer$output_info,
+    validation_data = val_data,
+    early_stopping = TRUE,
+    patience = 5,
+    seed = 123
+  )
+
+  expect_s3_class(result, "trained_RGAN")
+  expect_equal(result$settings$pac, 10)
+
+  # Verify we can sample synthetic data
+  synthetic <- sample_synthetic_data(result, transformer, n = 50)
+  expect_equal(nrow(synthetic), 50)
+})

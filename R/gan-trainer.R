@@ -442,15 +442,38 @@ gan_trainer <-
             d_net$eval()
 
             # Generate synthetic samples for validation
-            val_noise <- sample_noise(c(min(500, nrow(data)), noise_dim))$to(device = device)
+            # Ensure sample count is divisible by pac for PacGAN
+            val_sample_count <- min(500, nrow(data))
+            val_sample_count <- val_sample_count - (val_sample_count %% pac)
+            if (val_sample_count < pac) val_sample_count <- pac
+
+            val_noise <- sample_noise(c(val_sample_count, noise_dim))$to(device = device)
             val_synth <- torch::with_no_grad(g_net(val_noise))
 
             # Compute discriminator accuracy on validation data
             if (!is.null(validation_data)) {
+              # Ensure batch size is divisible by pac for PacGAN
+              val_size <- min(batch_size, nrow(validation_data))
+              val_size <- val_size - (val_size %% pac)  # Make divisible by pac
+              if (val_size < pac) val_size <- pac
+
               val_batch <- validation_data[sample(nrow(validation_data),
-                                                   size = min(batch_size, nrow(validation_data)))]$to(device = device)
-              val_real_scores <- torch::with_no_grad(d_net(val_batch))
-              val_fake_scores <- torch::with_no_grad(d_net(val_synth[1:min(batch_size, nrow(val_synth))]))
+                                                   size = val_size)]$to(device = device)
+
+              # Pack samples for PacGAN if needed
+              if (pac > 1) {
+                val_batch_packed <- pack_samples(val_batch, pac)
+                val_synth_size <- min(val_size, nrow(val_synth))
+                val_synth_size <- val_synth_size - (val_synth_size %% pac)
+                if (val_synth_size < pac) val_synth_size <- pac
+                val_synth_packed <- pack_samples(val_synth[1:val_synth_size], pac)
+              } else {
+                val_batch_packed <- val_batch
+                val_synth_packed <- val_synth[1:min(batch_size, nrow(val_synth))]
+              }
+
+              val_real_scores <- torch::with_no_grad(d_net(val_batch_packed))
+              val_fake_scores <- torch::with_no_grad(d_net(val_synth_packed))
 
               # Discriminator accuracy: real should be high, fake should be low
               if (value_function == "original") {

@@ -492,8 +492,21 @@ TabularGenerator <- torch::nn_module(
     # Store final hidden dimension for progressive training
     self$final_hidden_dim <- dim
 
-    # Output layer - no activation, will apply specific activations in forward
-    self$output_layer <- torch::nn_linear(dim, data_dim)
+    # For progressive training, we need output layers for each possible stage
+    # Each output layer maps from that block's output dimension to data_dim
+    self$output_layers <- torch::nn_module_list()
+    self$block_output_dims <- c()
+
+    block_dim <- noise_dim
+    for (i in seq_along(hidden_units)) {
+      block_dim <- hidden_units[[i]]
+      self$block_output_dims <- c(self$block_output_dims, block_dim)
+      out_layer <- torch::nn_linear(block_dim, data_dim)
+      self$output_layers$append(out_layer)
+    }
+
+    # Legacy: keep output_layer pointing to the final one for backwards compatibility
+    self$output_layer <- self$output_layers[[length(hidden_units)]]
 
     # Apply weight initialization
     self$apply(function(module) {
@@ -528,8 +541,9 @@ TabularGenerator <- torch::nn_module(
       }
     }
 
-    # Output layer
-    data <- self$output_layer(data)
+    # Use the output layer corresponding to the last active block
+    # This ensures correct dimensions during progressive training
+    data <- self$output_layers[[num_active]](data)
 
     # Apply appropriate activation to each output block
     outputs <- list()

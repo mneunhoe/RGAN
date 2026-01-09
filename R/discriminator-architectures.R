@@ -30,7 +30,7 @@ Discriminator <- torch::nn_module(
       self$seq$add_module(module = torch::nn_linear(dim, neurons),
                           name = paste0("Linear_", i))
       # Add a leakyReLU activation
-      self$seq$add_module(module = torch::nn_relu(),
+      self$seq$add_module(module = torch::nn_leaky_relu(0.2),
                           name = paste0("Activation_", i))
       # And a Dropout layer
       self$seq$add_module(module = torch::nn_dropout(dropout_rate),

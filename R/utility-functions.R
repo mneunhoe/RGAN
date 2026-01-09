@@ -99,3 +99,177 @@ kl_gen <- function(dis_fake) {
   loss = -torch::torch_mean(dis_fake)
   return(loss)
 }
+
+
+#' @title Print Method for Trained RGAN Objects
+#'
+#' @description Displays a summary of a trained GAN model, including network
+#'   architecture, training settings, and final losses.
+#'
+#' @param x A trained GAN object of class "trained_RGAN"
+#' @param ... Additional arguments (currently unused)
+#'
+#' @return Invisibly returns the input object
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' data <- sample_toydata()
+#' transformer <- data_transformer$new()
+#' transformer$fit(data)
+#' transformed_data <- transformer$transform(data)
+#' trained_gan <- gan_trainer(transformed_data, epochs = 10, track_loss = TRUE)
+#' print(trained_gan)
+#' }
+print.trained_RGAN <- function(x, ...) {
+  cat("Trained RGAN Model\n")
+  cat("==================\n\n")
+
+  # Training settings
+  cat("Training Settings:\n")
+  cat(sprintf("  Value function: %s\n", x$settings$value_function))
+  cat(sprintf("  Epochs: %d\n", x$settings$epochs))
+  cat(sprintf("  Batch size: %d\n", x$settings$batch_size))
+  cat(sprintf("  Noise dimension: %d\n", x$settings$noise_dim))
+  cat(sprintf("  Base learning rate: %s\n", format(x$settings$base_lr, scientific = FALSE)))
+  cat(sprintf("  Device: %s\n", x$settings$device))
+
+  if (x$settings$value_function == "wgan-gp") {
+    cat(sprintf("  GP lambda: %s\n", x$settings$gp_lambda))
+  }
+  if (x$settings$early_stopping) {
+    cat(sprintf("  Early stopping: enabled (patience=%d)\n", x$settings$patience))
+  }
+  cat("\n")
+
+  # Network architecture - count parameters
+  count_params <- function(net) {
+    params <- net$parameters
+    total <- 0
+    for (p in params) {
+      total <- total + prod(p$shape)
+    }
+    total
+  }
+
+  cat("Generator:\n")
+  g_params <- count_params(x$generator)
+  cat(sprintf("  Parameters: %s\n", format(g_params, big.mark = ",")))
+
+  cat("\nDiscriminator:\n")
+  d_params <- count_params(x$discriminator)
+  cat(sprintf("  Parameters: %s\n", format(d_params, big.mark = ",")))
+
+  cat(sprintf("\nTotal parameters: %s\n", format(g_params + d_params, big.mark = ",")))
+
+  # Final losses
+  if (!is.null(x$losses)) {
+    cat("\nFinal Training Losses:\n")
+    n_losses <- length(x$losses$g_loss)
+    if (n_losses > 0) {
+      # Average over last epoch's worth of steps or last 10, whichever is smaller
+      n_avg <- min(10, n_losses)
+      g_final <- mean(tail(x$losses$g_loss, n_avg))
+      d_final <- mean(tail(x$losses$d_loss, n_avg))
+      cat(sprintf("  Generator loss: %.4f (avg of last %d steps)\n", g_final, n_avg))
+      cat(sprintf("  Discriminator loss: %.4f (avg of last %d steps)\n", d_final, n_avg))
+    }
+  } else {
+    cat("\nLosses: Not tracked (use track_loss=TRUE)\n")
+  }
+
+  # Validation metrics
+  if (!is.null(x$validation_metrics) && length(x$validation_metrics) > 0) {
+    cat("\nFinal Validation Metrics:\n")
+    last_metric <- x$validation_metrics[[length(x$validation_metrics)]]
+    cat(sprintf("  Epoch: %d\n", last_metric$epoch))
+    cat(sprintf("  Discriminator accuracy: %.2f%%\n", last_metric$d_accuracy * 100))
+    cat(sprintf("  Generator diversity: %.4f\n", last_metric$diversity))
+  }
+
+  invisible(x)
+}
+
+
+#' @title Plot GAN Training Losses
+#'
+#' @description Plots the generator and discriminator loss curves from GAN training.
+#'   Requires the GAN to have been trained with `track_loss = TRUE`.
+#'
+#' @param trained_gan A trained GAN object of class "trained_RGAN" with tracked losses
+#' @param smooth Smoothing factor for the loss curves (0 = no smoothing, higher = more smoothing).
+#'   Uses exponential moving average. Defaults to 0.
+#' @param ... Additional arguments passed to plot()
+#'
+#' @return Invisibly returns NULL. Called for side effect of producing a plot.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' data <- sample_toydata()
+#' transformer <- data_transformer$new()
+#' transformer$fit(data)
+#' transformed_data <- transformer$transform(data)
+#' trained_gan <- gan_trainer(transformed_data, epochs = 50, track_loss = TRUE)
+#' plot_losses(trained_gan)
+#' plot_losses(trained_gan, smooth = 0.9)  # With smoothing
+#' }
+plot_losses <- function(trained_gan, smooth = 0, ...) {
+  if (!inherits(trained_gan, "trained_RGAN")) {
+    stop("trained_gan must be an object of class 'trained_RGAN'")
+  }
+
+  if (is.null(trained_gan$losses)) {
+    stop("No loss data available. Train with track_loss = TRUE to record losses.")
+  }
+
+  g_loss <- trained_gan$losses$g_loss
+  d_loss <- trained_gan$losses$d_loss
+
+  # Apply exponential moving average smoothing
+  if (smooth > 0 && smooth < 1) {
+    ema <- function(x, alpha) {
+      result <- numeric(length(x))
+      result[1] <- x[1]
+      for (i in 2:length(x)) {
+        result[i] <- alpha * result[i-1] + (1 - alpha) * x[i]
+      }
+      result
+    }
+    g_loss <- ema(g_loss, smooth)
+    d_loss <- ema(d_loss, smooth)
+  }
+
+  steps <- seq_along(g_loss)
+
+  # Set up plot
+  oldpar <- graphics::par(no.readonly = TRUE)
+  on.exit(graphics::par(oldpar))
+
+  y_range <- range(c(g_loss, d_loss), na.rm = TRUE)
+
+  graphics::plot(
+    steps, g_loss,
+    type = "l",
+    col = viridis::viridis(2)[1],
+    ylim = y_range,
+    xlab = "Training Step",
+    ylab = "Loss",
+    main = "GAN Training Losses",
+    bty = "n",
+    las = 1,
+    ...
+  )
+
+  graphics::lines(steps, d_loss, col = viridis::viridis(2)[2])
+
+  graphics::legend(
+    "topright",
+    legend = c("Generator", "Discriminator"),
+    col = viridis::viridis(2),
+    lty = 1,
+    bty = "n"
+  )
+
+  invisible(NULL)
+}

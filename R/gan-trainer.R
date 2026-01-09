@@ -88,6 +88,30 @@ gan_trainer <-
       torch::torch_manual_seed(seed)
     }
 
+# Input validation -------------------------------------------------------------
+    if (batch_size <= 0) {
+      stop("batch_size must be a positive integer")
+    }
+    if (epochs <= 0) {
+      stop("epochs must be a positive integer")
+    }
+    if (base_lr <= 0) {
+      stop("base_lr must be a positive number")
+    }
+    if (noise_dim <= 0) {
+      stop("noise_dim must be a positive integer")
+    }
+
+    # Validate device availability
+    if (device == "cuda" && !torch::cuda_is_available()) {
+      warning("CUDA device requested but not available. Falling back to CPU.")
+      device <- "cpu"
+    }
+    if (device == "mps" && !torch::backends_mps_is_available()) {
+      warning("MPS device requested but not available. Falling back to CPU.")
+      device <- "cpu"
+    }
+
 # Check if data is in the correct format ---------------------------------------
     !(any(
       c("dataset", "matrix", "array", "torch_tensor") %in% class(data)
@@ -103,9 +127,43 @@ gan_trainer <-
 
 # Calculate the number of steps per epoch --------------------------------------
     if ((any(c("array", "matrix") %in% class(data)))) {
+      # Check for empty data
+      if (nrow(data) == 0) {
+        stop("data cannot be empty")
+      }
+      if (ncol(data) == 0) {
+        stop("data must have at least one column")
+      }
+      # Check for all-NA data
+      if (all(is.na(data))) {
+        stop("data cannot be all NA values")
+      }
+
       data <- torch::torch_tensor(data)$to(device = "cpu")
       data_dim <- ncol(data)
       steps <- nrow(data) %/% batch_size
+
+      # Warn if batch_size is larger than data
+      if (batch_size > nrow(data)) {
+        warning(sprintf(
+          "batch_size (%d) is larger than number of observations (%d). Using full data as single batch.",
+          batch_size, nrow(data)
+        ))
+        steps <- 1
+      }
+
+      # Validate plot_dimensions
+      if (plot_progress) {
+        if (length(plot_dimensions) != 2) {
+          stop("plot_dimensions must be a vector of length 2")
+        }
+        if (any(plot_dimensions < 1) || any(plot_dimensions > data_dim)) {
+          stop(sprintf(
+            "plot_dimensions must be between 1 and %d (number of columns in data)",
+            data_dim
+          ))
+        }
+      }
     }
 
     if("image_folder" %in% class(data)) {
@@ -620,6 +678,9 @@ get_batch <- function(dataset, batch_size, device = "cpu") {
                         num_workers = 0)
     torch::dataloader_next(torch::dataloader_make_iter(dataloader))$x$to(device = device)
   } else {
-    dataset[sample(nrow(dataset), size = batch_size)]$to(device = device)
+    n_rows <- nrow(dataset)
+    # Use replacement if batch_size > n_rows
+    use_replace <- batch_size > n_rows
+    dataset[sample(n_rows, size = batch_size, replace = use_replace)]$to(device = device)
   }
 }

@@ -241,8 +241,8 @@ helping it detect lack of diversity and reducing mode collapse.
 If you enabled `track_loss = TRUE`, you can visualize the training:
 
 ```{r plot-losses}
-# Plot training losses
-if (!is.null(trained_gan$loss_history)) {
+# Plot training losses (requires track_loss = TRUE during training)
+if (!is.null(trained_gan$losses)) {
   plot_losses(trained_gan, smooth = 0.9)
 }
 ```

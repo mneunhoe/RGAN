@@ -4,64 +4,209 @@
 \alias{data_transformer}
 \title{Data Transformer}
 \value{
-A class to transform (normalize or one hot encode) tabular data for RGAN
+An R6 class object for transforming tabular data
 }
 \description{
-Provides a class to transform data for RGAN.
-Method \verb{$new()} initializes a new transformer, method \verb{$fit(data)} learns
-the parameters for the transformation from data (e.g. means and sds).
-Methods \verb{$transform()} and \verb{$inverse_transform()} can be used to transform
-and back transform a data set based on the learned parameters.
+An R6 class for preprocessing tabular data before GAN training.
+The transformer learns normalization parameters from data and provides
+reversible transformations to convert between original and GAN-ready formats.
+}
+\details{
+\subsection{Overview}{
 
-DataTransformer supports two normalization methods for continuous columns:
-\itemize{
-\item \strong{Standard (default):} z-transformation using mean and standard deviation.
-\item \strong{Mode-specific:} Fits a Gaussian Mixture Model (GMM) to handle
-multi-modal distributions. Each value is normalized within its assigned mode,
-and a mode indicator is included. This is the approach used by CTGAN and
-significantly improves GAN performance on columns with skewed or multi-modal
-distributions.
+GANs work best when input data is normalized to a consistent scale. The
+\code{data_transformer} class handles this preprocessing automatically:
+\enumerate{
+\item \strong{Fit}: Learn transformation parameters from your data
+\item \strong{Transform}: Convert data to normalized format for GAN training
+\item \strong{Inverse Transform}: Convert GAN output back to original scale
+}
 }
 
-Categorical features are one-hot encoded.
+\subsection{Normalization Methods}{
+\subsection{Standard Normalization (default)}{
+
+Applies z-score standardization to continuous columns:
+\deqn{z = \frac{x - \mu}{\sigma}}
+
+where \eqn{\mu} is the column mean and \eqn{\sigma} is the standard deviation.
+This maps data to approximately zero mean and unit variance.
+
+\strong{Best for}: Data with roughly Gaussian distributions or when simplicity is preferred.
+}
+
+\subsection{Mode-Specific Normalization (CTGAN-style)}{
+
+For columns with multi-modal, skewed, or complex distributions, mode-specific
+normalization fits a Gaussian Mixture Model (GMM) and normalizes each value
+within its assigned mode. This approach is used by CTGAN (Xu et al., 2019).
+
+\strong{How it works}:
+\enumerate{
+\item Fit a GMM with \code{n_modes} components using the EM algorithm
+\item For each value, assign it to the most likely mode
+\item Normalize the value within that mode's distribution
+\item Output includes: one-hot encoded mode indicator + normalized value
+}
+
+\strong{Output dimensions}: For a column with \code{k} modes, the transformed output has
+\code{k + 1} columns: \code{k} columns for the mode indicator (one-hot) and 1 column for
+the normalized value (clipped to [-1, 1]).
+
+\strong{Best for}: Columns with multiple peaks, heavy tails, or skewed distributions.
+Significantly improves GAN performance on real-world tabular data.
+}
+
+}
+
+\subsection{Categorical Columns}{
+
+Categorical (discrete) columns are one-hot encoded. Each category becomes a
+separate binary column. The inverse transform selects the category with the
+highest value (argmax).
+}
+
+\subsection{Fields}{
+
+After fitting, the transformer stores:
+\describe{
+\item{meta}{List of metadata for each column (means, stds, levels, etc.)}
+\item{output_info}{List describing the output structure for each column}
+\item{output_dimensions}{Total number of columns in transformed data}
+\item{mode_specific}{Whether mode-specific normalization was used}
+\item{n_modes}{Number of GMM modes (if mode_specific = TRUE)}
+}
+}
+
+\subsection{Integration with RGAN}{
+
+The transformer integrates seamlessly with RGAN's training and sampling functions:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# 1. Create and fit transformer
+transformer <- data_transformer$new()
+transformer$fit(data, discrete_columns = c("category_col"))
+
+# 2. Transform data for training
+transformed_data <- transformer$transform(data)
+
+# 3. Train GAN
+trained_gan <- gan_trainer(transformed_data)
+
+# 4. Sample and inverse transform
+synthetic_data <- sample_synthetic_data(trained_gan, transformer)
+}\if{html}{\out{</div>}}
+
+For mode-specific normalization with categorical columns, use \code{TabularGenerator}
+with Gumbel-Softmax for differentiable sampling (see \code{gan_trainer} with \code{output_info}).
+}
 }
 \examples{
 \dontrun{
-# Before running the first time the torch backend needs to be installed
-torch::install_torch()
-# Load data
+# ============================================================
+# Example 1: Basic usage with standard normalization
+# ============================================================
+
+# Load sample data
 data <- sample_toydata()
-# Build new transformer
+
+# Create and fit transformer
 transformer <- data_transformer$new()
-# Fit transformer to data (standard normalization)
 transformer$fit(data)
-# Transform data and store as new object
-transformed_data <-  transformer$transform(data)
 
-# Or use mode-specific normalization for better handling of multi-modal data
-transformer_gmm <- data_transformer$new()
-transformer_gmm$fit(data, mode_specific = TRUE, n_modes = 10)
-transformed_data_gmm <- transformer_gmm$transform(data)
+# Transform data
+transformed_data <- transformer$transform(data)
+cat("Original dimensions:", dim(data), "\n")
+cat("Transformed dimensions:", dim(transformed_data), "\n")
 
-# Train the default GAN
-trained_gan <- gan_trainer(transformed_data)
-# Sample synthetic data from the trained GAN
+# Train GAN and generate synthetic data
+trained_gan <- gan_trainer(transformed_data, epochs = 50)
 synthetic_data <- sample_synthetic_data(trained_gan, transformer)
-# Plot the results
-GAN_update_plot(data = data,
-synth_data = synthetic_data,
-main = "Real and Synthetic Data after Training")
+
+# Compare distributions
+par(mfrow = c(1, 2))
+plot(data, main = "Original Data")
+plot(synthetic_data, main = "Synthetic Data")
+
+# ============================================================
+# Example 2: Mode-specific normalization for complex distributions
+# ============================================================
+
+# Create data with multiple modes
+set.seed(42)
+bimodal_data <- data.frame(
+  x = c(rnorm(500, mean = -3), rnorm(500, mean = 3)),
+  y = c(rnorm(500, mean = 0), rnorm(500, mean = 5))
+)
+
+# Fit with mode-specific normalization
+transformer_gmm <- data_transformer$new()
+transformer_gmm$fit(bimodal_data, mode_specific = TRUE, n_modes = 5)
+
+# Check output dimensions (more columns due to mode indicators)
+transformed_gmm <- transformer_gmm$transform(bimodal_data)
+cat("Original columns:", ncol(bimodal_data), "\n")
+cat("Transformed columns:", ncol(transformed_gmm), "\n")
+
+# ============================================================
+# Example 3: Mixed continuous and categorical columns
+# ============================================================
+
+# Create mixed data
+mixed_data <- data.frame(
+  age = rnorm(1000, mean = 40, sd = 15),
+  income = rexp(1000, rate = 0.00002),
+  gender = sample(c("M", "F"), 1000, replace = TRUE),
+  education = sample(c("HS", "BA", "MA", "PhD"), 1000, replace = TRUE)
+)
+
+# Fit transformer specifying categorical columns
+transformer_mixed <- data_transformer$new()
+transformer_mixed$fit(
+  mixed_data,
+  discrete_columns = c("gender", "education"),
+  mode_specific = TRUE,  # GMM for continuous columns
+  n_modes = 5
+)
+
+# Transform
+transformed_mixed <- transformer_mixed$transform(mixed_data)
+cat("Output dimensions:", transformer_mixed$output_dimensions, "\n")
+
+# Inverse transform preserves types
+reconstructed <- transformer_mixed$inverse_transform(transformed_mixed)
+str(reconstructed)
+
+# ============================================================
+# Example 4: Verifying inverse transform accuracy
+# ============================================================
+
+data <- sample_toydata()
+transformer <- data_transformer$new()
+transformer$fit(data)
+
+# Round-trip transformation
+transformed <- transformer$transform(data)
+reconstructed <- transformer$inverse_transform(transformed)
+
+# Check reconstruction error (should be very small)
+max_error <- max(abs(as.matrix(data) - as.matrix(reconstructed)))
+cat("Maximum reconstruction error:", max_error, "\n")
 }
 
 ## ------------------------------------------------
 ## Method `data_transformer$fit`
 ## ------------------------------------------------
 
+# Standard normalization
 data <- sample_toydata()
 transformer <- data_transformer$new()
 transformer$fit(data)
-# Or with mode-specific normalization
+
+# Mode-specific normalization
 transformer$fit(data, mode_specific = TRUE, n_modes = 10)
+
+# With categorical columns
+transformer$fit(data, discrete_columns = c("category"))
 
 ## ------------------------------------------------
 ## Method `data_transformer$transform`
@@ -71,6 +216,7 @@ data <- sample_toydata()
 transformer <- data_transformer$new()
 transformer$fit(data)
 transformed_data <- transformer$transform(data)
+cat("Output dimensions:", dim(transformed_data))
 
 ## ------------------------------------------------
 ## Method `data_transformer$inverse_transform`
@@ -79,9 +225,20 @@ transformed_data <- transformer$transform(data)
 data <- sample_toydata()
 transformer <- data_transformer$new()
 transformer$fit(data)
+
+# Round-trip transformation
 transformed_data <- transformer$transform(data)
 reconstructed_data <- transformer$inverse_transform(transformed_data)
+
+# Use with GAN output
+# synthetic_raw <- trained_gan$generator(noise)
+# synthetic_data <- transformer$inverse_transform(as_array(synthetic_raw))
 Fit a Gaussian Mixture Model using EM algorithm
+}
+\references{
+Xu, L., Skoularidou, M., Cuesta-Infante, A., & Veeramachaneni, K. (2019).
+Modeling tabular data using conditional GAN. Advances in Neural Information
+Processing Systems, 32.
 }
 \section{Methods}{
 \subsection{Public methods}{
@@ -113,6 +270,7 @@ Create a new data_transformer object
 \if{html}{\out{<a id="method-data_transformer-fit_continuous"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-fit_continuous}{}}}
 \subsection{Method \code{fit_continuous()}}{
+Fit parameters for a continuous column (internal method)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_continuous(
   column = NULL,
@@ -122,21 +280,48 @@ Create a new data_transformer object
 )}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{column}}{Column name or index}
+
+\item{\code{data}}{Column data as a single-column matrix}
+
+\item{\code{mode_specific}}{Whether to use GMM-based normalization}
+
+\item{\code{n_modes}}{Number of GMM components}
+}
+\if{html}{\out{</div>}}
+}
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-data_transformer-fit_discrete"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-fit_discrete}{}}}
 \subsection{Method \code{fit_discrete()}}{
+Fit parameters for a discrete/categorical column (internal method)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_discrete(column = NULL, data = NULL)}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{column}}{Column name or index}
+
+\item{\code{data}}{Column data as a single-column matrix}
+}
+\if{html}{\out{</div>}}
+}
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-data_transformer-fit"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-fit}{}}}
 \subsection{Method \code{fit()}}{
-Fit a data_transformer to data.
+Fit the transformer to learn normalization parameters from data.
+
+This method analyzes each column in the data and stores the parameters
+needed for transformation (means, standard deviations, category levels, etc.).
+Must be called before \code{transform()} or \code{inverse_transform()}.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit(
   data,
@@ -149,25 +334,41 @@ Fit a data_transformer to data.
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{data}}{The data set to transform}
+\item{\code{data}}{A data.frame, matrix, or array containing the training data.
+Column names are preserved and used for tracking transformations.}
 
-\item{\code{discrete_columns}}{Column ids for columns with discrete/nominal values to be one hot encoded.}
+\item{\code{discrete_columns}}{Character or integer vector specifying which columns
+contain categorical/discrete values. These columns will be one-hot encoded.
+Can be column names (character) or column indices (integer). Columns not
+listed here are treated as continuous. Defaults to NULL (all continuous).}
 
-\item{\code{mode_specific}}{If TRUE, use mode-specific normalization (GMM) for continuous columns.
-This helps with multi-modal distributions. Defaults to FALSE.}
+\item{\code{mode_specific}}{Logical. If TRUE, use mode-specific normalization (GMM)
+for continuous columns. This fits a Gaussian Mixture Model to each
+continuous column and normalizes values within their assigned mode.
+Recommended for columns with multi-modal or skewed distributions.
+Defaults to FALSE (standard z-score normalization).}
 
-\item{\code{n_modes}}{Number of modes (Gaussian components) to fit for mode-specific normalization.
-Defaults to 10. Only used when mode_specific = TRUE.}
+\item{\code{n_modes}}{Integer. Maximum number of Gaussian components for GMM fitting.
+The actual number may be lower if modes with weight < 0.01 are pruned.
+Only used when \code{mode_specific = TRUE}. Defaults to 10.}
 }
 \if{html}{\out{</div>}}
 }
+\subsection{Returns}{
+The transformer object (invisibly), allowing method chaining.
+}
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
-\preformatted{data <- sample_toydata()
+\preformatted{# Standard normalization
+data <- sample_toydata()
 transformer <- data_transformer$new()
 transformer$fit(data)
-# Or with mode-specific normalization
+
+# Mode-specific normalization
 transformer$fit(data, mode_specific = TRUE, n_modes = 10)
+
+# With categorical columns
+transformer$fit(data, discrete_columns = c("category"))
 }
 \if{html}{\out{</div>}}
 
@@ -178,25 +379,54 @@ transformer$fit(data, mode_specific = TRUE, n_modes = 10)
 \if{html}{\out{<a id="method-data_transformer-transform_continuous"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-transform_continuous}{}}}
 \subsection{Method \code{transform_continuous()}}{
+Transform a continuous column (internal method)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$transform_continuous(column_meta, data)}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{column_meta}}{Metadata for this column from fit_continuous}
+
+\item{\code{data}}{Vector of values to transform}
+}
+\if{html}{\out{</div>}}
+}
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-data_transformer-transform_discrete"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-transform_discrete}{}}}
 \subsection{Method \code{transform_discrete()}}{
+Transform a discrete column to one-hot encoding (internal method)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$transform_discrete(column_meta, data)}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{column_meta}}{Metadata for this column from fit_discrete}
+
+\item{\code{data}}{Vector of values to transform}
+}
+\if{html}{\out{</div>}}
+}
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-data_transformer-transform"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-transform}{}}}
 \subsection{Method \code{transform()}}{
-Transform data using a fitted data_transformer. (From original format to transformed format.)
+Transform data from original format to normalized format for GAN training.
+
+Applies the learned transformations to convert data into a format suitable
+for neural network training:
+\itemize{
+\item Continuous columns: z-score normalization or mode-specific normalization
+\item Categorical columns: one-hot encoding
+}
+
+The transformer must be fitted before calling this method.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$transform(data)}\if{html}{\out{</div>}}
 }
@@ -204,9 +434,21 @@ Transform data using a fitted data_transformer. (From original format to transfo
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{data}}{The data set to transform}
+\item{\code{data}}{A data.frame, matrix, or array with the same columns as the
+data used for fitting. Column order and names must match.}
 }
 \if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A numeric matrix with transformed data. The number of columns
+depends on the transformation:
+\itemize{
+\item Standard normalization: same number of columns as input
+\item Mode-specific: (n_modes + 1) columns per continuous column
+\item Categorical: one column per category level
+}
+
+Use \code{transformer$output_dimensions} to check the total output columns.
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
@@ -214,6 +456,7 @@ Transform data using a fitted data_transformer. (From original format to transfo
 transformer <- data_transformer$new()
 transformer$fit(data)
 transformed_data <- transformer$transform(data)
+cat("Output dimensions:", dim(transformed_data))
 }
 \if{html}{\out{</div>}}
 
@@ -224,25 +467,55 @@ transformed_data <- transformer$transform(data)
 \if{html}{\out{<a id="method-data_transformer-inverse_transform_continuous"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-inverse_transform_continuous}{}}}
 \subsection{Method \code{inverse_transform_continuous()}}{
+Inverse transform a continuous column (internal method)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$inverse_transform_continuous(meta, data)}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{meta}}{Metadata for this column}
+
+\item{\code{data}}{Transformed data to inverse transform}
+}
+\if{html}{\out{</div>}}
+}
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-data_transformer-inverse_transform_discrete"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-inverse_transform_discrete}{}}}
 \subsection{Method \code{inverse_transform_discrete()}}{
+Inverse transform a discrete column from one-hot (internal method)
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$inverse_transform_discrete(meta, data)}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{meta}}{Metadata for this column}
+
+\item{\code{data}}{One-hot encoded data to inverse transform}
+}
+\if{html}{\out{</div>}}
+}
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-data_transformer-inverse_transform"></a>}}
 \if{latex}{\out{\hypertarget{method-data_transformer-inverse_transform}{}}}
 \subsection{Method \code{inverse_transform()}}{
-Inverse Transform data using a fitted data_transformer. (From transformed format to original format.)
+Inverse transform data from normalized format back to original scale.
+
+Reverses the transformations applied by \code{transform()}:
+\itemize{
+\item Continuous columns: denormalized using stored means/stds
+\item Mode-specific: selects mode with highest probability, then denormalizes
+\item Categorical columns: selects category with highest value (argmax)
+}
+
+This is typically used to convert GAN-generated samples back to the
+original data format for analysis and use.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{data_transformer$inverse_transform(data)}\if{html}{\out{</div>}}
 }
@@ -250,17 +523,31 @@ Inverse Transform data using a fitted data_transformer. (From transformed format
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{data}}{The data set to transform}
+\item{\code{data}}{A numeric matrix in the transformed format. Must have the
+same number of columns as \code{transformer$output_dimensions}.}
 }
 \if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A data.frame with columns in the original format:
+\itemize{
+\item Continuous columns as numeric
+\item Categorical columns as character (or numeric if original levels were numeric)
+}
 }
 \subsection{Examples}{
 \if{html}{\out{<div class="r example copy">}}
 \preformatted{data <- sample_toydata()
 transformer <- data_transformer$new()
 transformer$fit(data)
+
+# Round-trip transformation
 transformed_data <- transformer$transform(data)
 reconstructed_data <- transformer$inverse_transform(transformed_data)
+
+# Use with GAN output
+# synthetic_raw <- trained_gan$generator(noise)
+# synthetic_data <- transformer$inverse_transform(as_array(synthetic_raw))
 Fit a Gaussian Mixture Model using EM algorithm
 }
 \if{html}{\out{</div>}}

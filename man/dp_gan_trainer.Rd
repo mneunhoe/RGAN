@@ -27,7 +27,10 @@ dp_gan_trainer(
   track_loss = FALSE,
   device = "cpu",
   seed = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  secure_rng = TRUE,
+  checkpoint_epochs = NULL,
+  checkpoint_path = NULL
 )
 }
 \arguments{
@@ -86,6 +89,16 @@ actual batch sizes will vary. Defaults to 50.}
 \item{seed}{Optional seed for reproducibility. Defaults to NULL.}
 
 \item{verbose}{Print privacy accounting information during training. Defaults to TRUE.}
+
+\item{secure_rng}{Use cryptographically secure RNG from OpenDP for noise generation.
+Defaults to TRUE. Set to FALSE for faster training during development/testing
+(uses torch's standard RNG which is not cryptographically secure).}
+
+\item{checkpoint_epochs}{Interval for saving model checkpoints (in epochs). If NULL (default),
+no checkpoints are saved. Checkpoints are required for post-GAN boosting.}
+
+\item{checkpoint_path}{Optional path for disk-based checkpoint persistence. If NULL (default),
+checkpoints are stored in memory only.}
 }
 \value{
 A list of class "trained_RGAN" containing:

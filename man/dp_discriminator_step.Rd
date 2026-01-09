@@ -15,7 +15,8 @@ dp_discriminator_step(
   d_net,
   d_optim,
   max_grad_norm,
-  noise_multiplier
+  noise_multiplier,
+  secure_rng = TRUE
 )
 }
 \arguments{
@@ -40,6 +41,8 @@ dp_discriminator_step(
 \item{max_grad_norm}{Maximum gradient norm for clipping}
 
 \item{noise_multiplier}{Gaussian noise multiplier}
+
+\item{secure_rng}{Use cryptographically secure RNG (slower but secure)}
 }
 \value{
 Scalar loss value

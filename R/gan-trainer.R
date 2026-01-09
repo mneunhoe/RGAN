@@ -29,6 +29,12 @@
 #' @param validation_data Optional validation data for monitoring training. Should be in the same format as training data.
 #' @param early_stopping Enable early stopping based on validation metrics. Defaults to FALSE.
 #' @param patience Number of epochs without improvement before stopping. Only used if early_stopping is TRUE. Defaults to 10.
+#' @param lr_schedule Learning rate schedule type. One of "constant" (default), "step", "exponential", or "cosine".
+#'   "step" reduces LR by lr_decay_factor every lr_decay_steps epochs.
+#'   "exponential" applies lr_decay_factor decay each epoch.
+#'   "cosine" uses cosine annealing from base_lr to 0 over all epochs.
+#' @param lr_decay_factor Multiplicative factor for learning rate decay. Used with "step" and "exponential" schedules. Defaults to 0.1.
+#' @param lr_decay_steps Number of epochs between learning rate reductions for "step" schedule. Defaults to 50.
 #'
 #' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
@@ -81,7 +87,10 @@ gan_trainer <-
            seed = NULL,
            validation_data = NULL,
            early_stopping = FALSE,
-           patience = 10) {
+           patience = 10,
+           lr_schedule = "constant",
+           lr_decay_factor = 0.1,
+           lr_decay_steps = 50) {
 # Set random seeds for reproducibility -----------------------------------------
     if (!is.null(seed)) {
       set.seed(seed)
@@ -100,6 +109,21 @@ gan_trainer <-
     }
     if (noise_dim <= 0) {
       stop("noise_dim must be a positive integer")
+    }
+
+    # Validate learning rate schedule parameters
+    valid_schedules <- c("constant", "step", "exponential", "cosine")
+    if (!lr_schedule %in% valid_schedules) {
+      stop(sprintf(
+        "lr_schedule must be one of: %s",
+        paste(valid_schedules, collapse = ", ")
+      ))
+    }
+    if (lr_decay_factor <= 0 || lr_decay_factor > 1) {
+      stop("lr_decay_factor must be between 0 (exclusive) and 1 (inclusive)")
+    }
+    if (lr_decay_steps <= 0) {
+      stop("lr_decay_steps must be a positive integer")
     }
 
     # Validate device availability
@@ -221,6 +245,9 @@ gan_trainer <-
       d_optim <- discriminator_optimizer
     }
 
+    # Store initial learning rates for scheduling
+    g_initial_lr <- g_optim$param_groups[[1]]$lr
+    d_initial_lr <- d_optim$param_groups[[1]]$lr
 
 # Define the noise distribution for the generator ------------------------------
     if (inherits(noise_distribution, "function")) {
@@ -426,6 +453,18 @@ gan_trainer <-
             g_net$train()
             d_net$train()
           }
+
+          # Adjust learning rates at epoch boundary
+          if (lr_schedule != "constant") {
+            adjust_learning_rate(
+              g_optim, g_initial_lr, current_epoch, epochs,
+              lr_schedule, lr_decay_factor, lr_decay_steps
+            )
+            adjust_learning_rate(
+              d_optim, d_initial_lr, current_epoch, epochs,
+              lr_schedule, lr_decay_factor, lr_decay_steps
+            )
+          }
         }
 
     }
@@ -455,7 +494,10 @@ gan_trainer <-
                       plot_dimensions = plot_dimensions,
                       device = device,
                       early_stopping = early_stopping,
-                      patience = patience)
+                      patience = patience,
+                      lr_schedule = lr_schedule,
+                      lr_decay_factor = lr_decay_factor,
+                      lr_decay_steps = lr_decay_steps)
     )
     class(output) <- "trained_RGAN"
     return(
@@ -683,4 +725,55 @@ get_batch <- function(dataset, batch_size, device = "cpu") {
     use_replace <- batch_size > n_rows
     dataset[sample(n_rows, size = batch_size, replace = use_replace)]$to(device = device)
   }
+}
+
+
+#' @title Adjust Learning Rate
+#'
+#' @description Internal helper function to adjust optimizer learning rates
+#'   according to the specified schedule.
+#'
+#' @param optimizer A torch optimizer object
+#' @param initial_lr The initial learning rate
+#' @param current_epoch The current epoch number (1-indexed)
+#' @param total_epochs Total number of training epochs
+#' @param lr_schedule The learning rate schedule type
+#' @param lr_decay_factor Decay factor for step/exponential schedules
+#' @param lr_decay_steps Epochs between decays for step schedule
+#'
+#' @return The new learning rate (invisibly). Modifies optimizer in place.
+#' @keywords internal
+adjust_learning_rate <- function(optimizer,
+                                  initial_lr,
+                                  current_epoch,
+                                  total_epochs,
+                                  lr_schedule,
+                                  lr_decay_factor,
+                                  lr_decay_steps) {
+  new_lr <- switch(
+    lr_schedule,
+    "constant" = initial_lr,
+    "step" = {
+      # Reduce LR by decay_factor every decay_steps epochs
+      num_decays <- current_epoch %/% lr_decay_steps
+      initial_lr * (lr_decay_factor ^ num_decays)
+    },
+    "exponential" = {
+      # Exponential decay each epoch
+      initial_lr * (lr_decay_factor ^ (current_epoch - 1))
+    },
+    "cosine" = {
+      # Cosine annealing from initial_lr to 0
+      initial_lr * (1 + cos(pi * current_epoch / total_epochs)) / 2
+    },
+    initial_lr  # fallback
+  )
+
+  # Update learning rate in optimizer
+  # In R torch, we need to modify param_groups in place using index access
+  for (i in seq_along(optimizer$param_groups)) {
+    optimizer$param_groups[[i]]$lr <- new_lr
+  }
+
+  invisible(new_lr)
 }

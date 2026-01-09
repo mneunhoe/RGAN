@@ -31,7 +31,10 @@ gan_trainer(
   seed = NULL,
   validation_data = NULL,
   early_stopping = FALSE,
-  patience = 10
+  patience = 10,
+  lr_schedule = "constant",
+  lr_decay_factor = 0.1,
+  lr_decay_steps = 50
 )
 }
 \arguments{
@@ -88,6 +91,15 @@ gan_trainer(
 \item{early_stopping}{Enable early stopping based on validation metrics. Defaults to FALSE.}
 
 \item{patience}{Number of epochs without improvement before stopping. Only used if early_stopping is TRUE. Defaults to 10.}
+
+\item{lr_schedule}{Learning rate schedule type. One of "constant" (default), "step", "exponential", or "cosine".
+"step" reduces LR by lr_decay_factor every lr_decay_steps epochs.
+"exponential" applies lr_decay_factor decay each epoch.
+"cosine" uses cosine annealing from base_lr to 0 over all epochs.}
+
+\item{lr_decay_factor}{Multiplicative factor for learning rate decay. Used with "step" and "exponential" schedules. Defaults to 0.1.}
+
+\item{lr_decay_steps}{Number of epochs between learning rate reductions for "step" schedule. Defaults to 50.}
 }
 \value{
 gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.

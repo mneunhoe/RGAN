@@ -140,6 +140,15 @@ print.trained_RGAN <- function(x, ...) {
   if (x$settings$early_stopping) {
     cat(sprintf("  Early stopping: enabled (patience=%d)\n", x$settings$patience))
   }
+  if (!is.null(x$settings$lr_schedule) && x$settings$lr_schedule != "constant") {
+    cat(sprintf("  LR schedule: %s", x$settings$lr_schedule))
+    if (x$settings$lr_schedule == "step") {
+      cat(sprintf(" (factor=%.2f, steps=%d)", x$settings$lr_decay_factor, x$settings$lr_decay_steps))
+    } else if (x$settings$lr_schedule == "exponential") {
+      cat(sprintf(" (factor=%.2f)", x$settings$lr_decay_factor))
+    }
+    cat("\n")
+  }
   cat("\n")
 
   # Network architecture - count parameters

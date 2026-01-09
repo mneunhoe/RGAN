@@ -44,7 +44,7 @@ library(torch)
 
 # Check for OpenDP availability
 if (!requireNamespace("opendp", quietly = TRUE)) {
-  stop("This vignette requires the 'opendp' package. Install it with: install.packages('opendp')")
+  stop("This vignette requires the 'opendp' package. Install it with: install.packages('opendp', repos = 'https://opendp.r-universe.dev/')")
 }
 
 # Set seed for reproducibility
@@ -124,6 +124,10 @@ cat("Transformed data shape:", dim(transformed_data), "\n")
 Train a GAN with a target privacy budget of ε = 1:
 
 ```{r dp-training-basic}
+# Enable OpenDP contrib features
+
+opendp::enable_features("contrib")
+
 # Train with differential privacy
 dp_gan <- dp_gan_trainer(
   data = transformed_data,

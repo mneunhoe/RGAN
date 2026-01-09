@@ -530,18 +530,23 @@ dp_accountant_poisson <- R6::R6Class(
 #'
 #' @keywords internal
 secure_poisson_subsample <- function(n_samples, sampling_rate) {
-  # Use OpenDP's vector domain for efficient secure random generation
+  # Enable OpenDP contrib features (required for make_gaussian)
+  opendp::enable_features("contrib")
+
+  # Use OpenDP's make_gaussian with proper domain and metric
+  # Set nan = FALSE to exclude NaN values (required for Gaussian mechanism)
   input_space <- opendp::vector_domain(
-    opendp::atom_domain(.T = "f64"),
-    size = n_samples
+    opendp::atom_domain(.T = "f64", nan = FALSE),
+    size = as.integer(n_samples)  # Must be integer
   )
+  input_metric <- opendp::l2_distance(.T = "f64")
 
   # Create measurement with Gaussian noise (scale=1 for standard normal)
-  meas <- input_space |> opendp::then_gaussian(scale = 1.0)
+  meas <- opendp::make_gaussian(input_space, input_metric, scale = 1.0)
 
   # Generate secure Gaussian samples
   zeros <- rep(0.0, n_samples)
-  secure_normals <- meas(zeros)
+  secure_normals <- meas(arg = zeros)  # OpenDP requires arg = parameter
 
   # Transform to uniform via standard normal CDF
   uniforms <- stats::pnorm(secure_normals)
@@ -567,19 +572,24 @@ secure_poisson_subsample <- function(n_samples, sampling_rate) {
 #'
 #' @keywords internal
 sample_secure_gaussian_like <- function(tensor, scale) {
+  # Enable OpenDP contrib features (required for make_gaussian)
+  opendp::enable_features("contrib")
+
   shape_vec <- as.integer(tensor$shape)
-  n_elements <- prod(shape_vec)
+  n_elements <- as.integer(prod(shape_vec))
 
   # Create OpenDP measurement for secure Gaussian sampling
+  # Set nan = FALSE to exclude NaN values (required for Gaussian mechanism)
   input_space <- opendp::vector_domain(
-    opendp::atom_domain(.T = "f64"),
-    size = n_elements
+    opendp::atom_domain(.T = "f64", nan = FALSE),
+    size = n_elements  # Already integer from as.integer above
   )
-  meas <- input_space |> opendp::then_gaussian(scale = scale)
+  input_metric <- opendp::l2_distance(.T = "f64")
+  meas <- opendp::make_gaussian(input_space, input_metric, scale = scale)
 
   # Generate secure noise
   zeros <- rep(0.0, n_elements)
-  noisy <- meas(zeros)
+  noisy <- meas(arg = zeros)  # OpenDP requires arg = parameter
 
   # Convert to torch tensor with same device
   torch::torch_tensor(noisy, device = tensor$device)$view(shape_vec)

@@ -57,55 +57,47 @@ information used to predict whether income exceeds $50K/year. It has a mix of
 continuous and categorical variables, making it an ideal benchmark for tabular GANs.
 
 ```{r load-data}
-# Load the Adult dataset
-# You can download it from UCI ML Repository or use a package like mlbench
-# Here we'll create a sample with similar structure for demonstration
+# Download the Adult dataset from UCI Machine Learning Repository
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
 
-# If you have the actual Adult dataset:
-# adult <- read.csv("adult.data", header = FALSE)
-
-# For this example, we'll simulate Adult-like data
-n_samples <- 5000
-
-# Create Adult-like dataset with mixed types
-adult <- data.frame(
-  # Continuous variables
-  age = round(rnorm(n_samples, mean = 38, sd = 13)),
-  education_num = round(pmax(1, pmin(16, rnorm(n_samples, mean = 10, sd = 2.5)))),
-  capital_gain = ifelse(runif(n_samples) > 0.9,
-                        rexp(n_samples, rate = 0.0001), 0),
-  capital_loss = ifelse(runif(n_samples) > 0.95,
-                        rexp(n_samples, rate = 0.001), 0),
-  hours_per_week = round(pmax(1, pmin(99, rnorm(n_samples, mean = 40, sd = 12)))),
-
-  # Categorical variables
-  workclass = sample(c("Private", "Self-emp", "Gov", "Other"),
-                     n_samples, replace = TRUE,
-                     prob = c(0.7, 0.1, 0.15, 0.05)),
-  education = sample(c("HS-grad", "Some-college", "Bachelors", "Masters", "Other"),
-                     n_samples, replace = TRUE,
-                     prob = c(0.3, 0.25, 0.2, 0.1, 0.15)),
-  marital_status = sample(c("Married", "Never-married", "Divorced", "Other"),
-                          n_samples, replace = TRUE,
-                          prob = c(0.45, 0.35, 0.15, 0.05)),
-  occupation = sample(c("Prof-specialty", "Craft-repair", "Exec-managerial",
-                        "Adm-clerical", "Sales", "Other"),
-                      n_samples, replace = TRUE),
-  relationship = sample(c("Husband", "Not-in-family", "Own-child",
-                          "Unmarried", "Wife", "Other"),
-                        n_samples, replace = TRUE),
-  race = sample(c("White", "Black", "Asian-Pac-Islander", "Other"),
-                n_samples, replace = TRUE,
-                prob = c(0.85, 0.1, 0.03, 0.02)),
-  sex = sample(c("Male", "Female"), n_samples, replace = TRUE, prob = c(0.67, 0.33)),
-  income = sample(c("<=50K", ">50K"), n_samples, replace = TRUE, prob = c(0.76, 0.24))
+# Column names (from adult.names file)
+col_names <- c(
+  "age", "workclass", "fnlwgt", "education", "education_num",
+  "marital_status", "occupation", "relationship", "race", "sex",
+  "capital_gain", "capital_loss", "hours_per_week", "native_country", "income"
 )
 
-# Ensure age is positive
-adult$age <- pmax(17, pmin(90, adult$age))
+# Read the data
+adult <- read.csv(
+  url,
+  header = FALSE,
+  col.names = col_names,
+  na.strings = " ?",
+  strip.white = TRUE,
+  stringsAsFactors = FALSE
+)
 
+# Check dimensions
+cat("Dataset size:", nrow(adult), "rows,", ncol(adult), "columns\n")
+
+# Remove rows with missing values for cleaner training
+adult <- na.omit(adult)
+cat("After removing NAs:", nrow(adult), "rows\n")
+
+# Select columns for synthesis (dropping fnlwgt and native_country for simplicity)
+adult <- adult[, c(
+  "age", "workclass", "education", "education_num", "marital_status",
+  "occupation", "relationship", "race", "sex",
+  "capital_gain", "capital_loss", "hours_per_week", "income"
+)]
+
+# View the data structure
 head(adult)
 str(adult)
+
+# Summary statistics for continuous variables
+cat("\n=== Continuous Variables Summary ===\n")
+summary(adult[, c("age", "education_num", "capital_gain", "capital_loss", "hours_per_week")])
 ```
 
 ## Data Transformation with Mode-Specific Normalization
@@ -121,16 +113,24 @@ For tabular data with mixed types, proper preprocessing is crucial. RGAN's
 # Create and fit the data transformer
 transformer <- data_transformer$new()
 
+# Define which columns are categorical
+discrete_cols <- c(
+  "workclass", "education", "marital_status",
+  "occupation", "relationship", "race", "sex", "income"
+)
+
 # Fit with mode-specific normalization for continuous columns
 # n_modes controls the number of GMM components (more modes = more expressive)
 # Use more modes (15-20) for columns with complex distributions like capital_gain
 transformer$fit(
   adult,
-  discrete_columns = c("workclass", "education", "marital_status",
-                       "occupation", "relationship", "race", "sex", "income"),
+  discrete_columns = discrete_cols,
   mode_specific = TRUE,  # Enable mode-specific normalization
   n_modes = 15           # More GMM components for complex distributions
 )
+
+cat("Continuous columns:", setdiff(names(adult), discrete_cols), "\n")
+cat("Categorical columns:", discrete_cols, "\n")
 
 # Transform the data
 transformed_data <- transformer$transform(adult)
@@ -491,18 +491,20 @@ deep_gen$set_active_blocks(5)
 After generating synthetic data, you may want to:
 
 ```{r post-processing, eval=FALSE}
-# Clip continuous values to valid ranges
-synthetic_data$age <- pmax(17, pmin(90, synthetic_data$age))
-synthetic_data$hours_per_week <- pmax(1, pmin(99, synthetic_data$hours_per_week))
+# Post-process synthetic data to ensure valid ranges
 
-# Round integer columns
-synthetic_data$age <- round(synthetic_data$age)
-synthetic_data$education_num <- round(synthetic_data$education_num)
-synthetic_data$hours_per_week <- round(synthetic_data$hours_per_week)
+# Clip continuous values to observed ranges in real data
+synthetic_data$age <- pmax(17, pmin(90, round(synthetic_data$age)))
+synthetic_data$education_num <- pmax(1, pmin(16, round(synthetic_data$education_num)))
+synthetic_data$hours_per_week <- pmax(1, pmin(99, round(synthetic_data$hours_per_week)))
 
-# Ensure non-negative values where appropriate
+# Capital gain/loss are non-negative and often 0
 synthetic_data$capital_gain <- pmax(0, synthetic_data$capital_gain)
 synthetic_data$capital_loss <- pmax(0, synthetic_data$capital_loss)
+
+# Optional: Round capital values to integers (as in original data)
+synthetic_data$capital_gain <- round(synthetic_data$capital_gain)
+synthetic_data$capital_loss <- round(synthetic_data$capital_loss)
 ```
 
 ### 8. Hyperparameter Search

@@ -149,7 +149,7 @@ dp_gan <- dp_gan_trainer(
 
   # === Training Parameters ===
   batch_size = 100,
-  epochs = 50,
+  epochs = 5,
   base_lr = 0.001,
 
   # === Monitoring ===
@@ -222,7 +222,7 @@ for (eps in epsilon_values) {
     max_grad_norm = 1.0,
     noise_dim = 32,
     batch_size = 100,
-    epochs = 50,
+    epochs = 5,
     base_lr = 0.001,
     verbose = FALSE,
     device = device,
@@ -292,86 +292,95 @@ for (eps in epsilon_values) {
 
 ## Combining DP Training with Post-GAN Boosting
 
-For the best of both worlds, you can combine DP training with post-GAN boosting.
-However, there's an important consideration: **the discriminator must output scores
-bounded between 0 and 1** (using sigmoid activation) for the privacy analysis of
-DP post-GAN boosting to be correct.
+For **end-to-end privacy guarantees**, both the GAN training and the post-GAN boosting
+must be differentially private. This is achieved by:
+
+1. Training with `dp_gan_trainer()` (DP-SGD for the discriminator)
+2. Applying `apply_post_gan_boosting()` with `dp = TRUE` (exponential mechanism)
+
+The total privacy budget is the **composition** of both steps. For example, if training
+uses ε₁ = 5 and boosting uses ε₂ = 1, the total privacy cost is approximately ε₁ + ε₂ = 6
+(under basic composition; tighter bounds are possible with advanced composition).
+
+**Important**: The discriminator must output scores bounded between 0 and 1 (sigmoid
+activation) for the privacy analysis of DP post-GAN boosting to be valid. The
+`dp_gan_trainer` uses sigmoid by default.
 
 ### Training a DP-GAN with Checkpoints
 
-First, we need to modify our approach. The `dp_gan_trainer` already uses sigmoid
-output for the discriminator by default. To enable post-GAN boosting, we need to
-manually train with checkpoints.
+Use `dp_gan_trainer` with `checkpoint_epochs` to enable post-GAN boosting:
 
 ```{r dp-pgb-training}
-# For DP + Post-GAN Boosting, train with checkpoints
-# The discriminator MUST use sigmoid output for valid privacy analysis
-
-# Create networks with sigmoid discriminator
-g_net <- Generator(noise_dim = 32, data_dim = ncol(transformed_data), dropout_rate = 0.5)
-d_net <- Discriminator(data_dim = ncol(transformed_data), dropout_rate = 0.5, sigmoid = TRUE)
-
-# Train with standard gan_trainer but using the value function that's compatible
-# with bounded discriminator scores
-dp_pgb_gan <- gan_trainer(
+# Train with DP-SGD and save checkpoints for post-GAN boosting
+# The discriminator uses sigmoid output by default (required for valid privacy analysis)
+dp_pgb_gan <- dp_gan_trainer(
   data = transformed_data,
 
-  # === Networks ===
-  generator = g_net$to(device = device),
-  discriminator = d_net$to(device = device),
+  # === Privacy Parameters for Training ===
+  target_epsilon = 5.0,     # Privacy budget for DP-SGD training
 
-  # === Value Function ===
-  # Use "original" value function which expects sigmoid discriminator
-  value_function = "original",
+  target_delta = 1e-5,
+  max_grad_norm = 1.0,
 
   # === Architecture ===
   noise_dim = 32,
 
   # === Training Parameters ===
   batch_size = 100,
-  epochs = 100,
-  base_lr = 0.0001,
+  epochs = 50,
+  base_lr = 0.001,
 
   # === Checkpoints for Post-GAN Boosting ===
-  checkpoint_epochs = 10,  # Save every 10 epochs
+  checkpoint_epochs = 5,    # Save every 5 epochs
 
   # === Monitoring ===
   track_loss = TRUE,
+  verbose = TRUE,
 
-  # === Device ===
+  # === Device & RNG ===
   device = device,
-  seed = 42
+  seed = 42,
+  secure_rng = has_opendp
 )
 
+cat("Training epsilon:", dp_pgb_gan$privacy$final_epsilon, "\n")
 cat("Checkpoints captured at epochs:", dp_pgb_gan$checkpoints$epochs, "\n")
 ```
 
 ### Applying DP Post-GAN Boosting
 
-Now apply post-GAN boosting with differential privacy:
+Now apply post-GAN boosting with differential privacy. The `dp = TRUE` flag uses
+the exponential mechanism for private discriminator selection:
 
 ```{r apply-dp-pgb}
 # Apply post-GAN boosting with differential privacy
-# The dp=TRUE flag uses the exponential mechanism for private discriminator selection
 boosted_result <- apply_post_gan_boosting(
   trained_gan = dp_pgb_gan,
   real_data = transformed_data,
   transformer = transformer,
   n_candidates = 1000,
   steps = 200,
-  dp = TRUE,              # Enable differential privacy
+  dp = TRUE,              # Enable differential privacy for boosting
   MW_epsilon = 1.0,       # Privacy budget for multiplicative weights
   seed = 123
 )
 
+# Calculate total privacy budget (basic composition)
+training_epsilon <- dp_pgb_gan$privacy$final_epsilon
+boosting_epsilon <- 1.0  # MW_epsilon
+total_epsilon <- training_epsilon + boosting_epsilon
+
+cat("Training epsilon:", training_epsilon, "\n")
+cat("Boosting epsilon:", boosting_epsilon, "\n")
+cat("Total epsilon (basic composition):", total_epsilon, "\n")
 cat("DP-Boosted samples:", boosted_result$n_unique, "\n")
 ```
 
-### Comparing Standard vs DP-Boosted
+### Comparing DP Training vs DP Training + Boosting
 
 ```{r compare-dp-pgb, fig.width=12, fig.height=4}
-# Generate standard synthetic data
-standard_synthetic <- sample_synthetic_data(dp_pgb_gan, transformer, n = 2000)
+# Generate synthetic data from DP-trained GAN (no boosting)
+dp_synthetic <- sample_synthetic_data(dp_pgb_gan, transformer, n_samples = 2000)
 
 # Get DP-boosted synthetic data
 boosted_synthetic <- boosted_result$samples
@@ -383,14 +392,15 @@ plot(data, col = rgb(0.2, 0.4, 0.6, 0.5), pch = 19,
      main = "Real Data", xlab = "x", ylab = "y", asp = 1,
      xlim = c(-5, 5), ylim = c(-5, 5))
 
-# Standard synthetic
-plot(standard_synthetic, col = rgb(0.8, 0.4, 0.1, 0.5), pch = 19,
-     main = "Standard Synthetic", xlab = "x", ylab = "y", asp = 1,
+# DP-trained synthetic (no boosting)
+plot(dp_synthetic, col = rgb(0.8, 0.4, 0.1, 0.5), pch = 19,
+     main = sprintf("DP Training (ε = %.1f)", training_epsilon),
+     xlab = "x", ylab = "y", asp = 1,
      xlim = c(-5, 5), ylim = c(-5, 5))
 
-# DP-boosted synthetic
+# DP-trained + DP-boosted synthetic
 plot(boosted_synthetic[, 1:2], col = rgb(0.2, 0.7, 0.3, 0.5), pch = 19,
-     main = sprintf("DP-Boosted (ε = %.1f)", 1.0),
+     main = sprintf("DP Training + Boosting (ε = %.1f)", total_epsilon),
      xlab = "x", ylab = "y", asp = 1,
      xlim = c(-5, 5), ylim = c(-5, 5))
 ```

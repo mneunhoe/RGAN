@@ -40,6 +40,10 @@
 #' @param secure_rng Use cryptographically secure RNG from OpenDP for noise generation.
 #'   Defaults to TRUE. Set to FALSE for faster training during development/testing
 #'   (uses torch's standard RNG which is not cryptographically secure).
+#' @param checkpoint_epochs Interval for saving model checkpoints (in epochs). If NULL (default),
+#'   no checkpoints are saved. Checkpoints are required for post-GAN boosting.
+#' @param checkpoint_path Optional path for disk-based checkpoint persistence. If NULL (default),
+#'   checkpoints are stored in memory only.
 #'
 #' @return A list of class "trained_RGAN" containing:
 #' \itemize{
@@ -130,7 +134,9 @@ dp_gan_trainer <- function(
     device = "cpu",
     seed = NULL,
     verbose = TRUE,
-    secure_rng = TRUE
+    secure_rng = TRUE,
+    checkpoint_epochs = NULL,
+    checkpoint_path = NULL
 ) {
   # Check for OpenDP availability (only required if secure_rng = TRUE)
   if (secure_rng && !requireNamespace("opendp", quietly = TRUE)) {
@@ -176,6 +182,17 @@ dp_gan_trainer <- function(
   }
   if (!is.null(sampling_rate) && (sampling_rate <= 0 || sampling_rate > 1)) {
     stop("sampling_rate must be between 0 (exclusive) and 1 (inclusive)")
+  }
+
+  # Validate checkpoint parameters
+  if (!is.null(checkpoint_epochs)) {
+    if (!is.numeric(checkpoint_epochs) || checkpoint_epochs <= 0 ||
+        checkpoint_epochs != as.integer(checkpoint_epochs)) {
+      stop("checkpoint_epochs must be a positive integer")
+    }
+  }
+  if (!is.null(checkpoint_path) && is.null(checkpoint_epochs)) {
+    warning("checkpoint_path provided but checkpoint_epochs is NULL. No checkpoints will be saved.")
   }
 
   # Validate device availability
@@ -305,6 +322,21 @@ dp_gan_trainer <- function(
   cli::cli_progress_bar("Training DP-GAN", total = epochs * steps_per_epoch)
   losses <- NULL
 
+  # Initialize checkpoint storage
+  checkpoints <- NULL
+  if (!is.null(checkpoint_epochs)) {
+    checkpoints <- list(
+      epochs = integer(0),
+      discriminators = list(),
+      generators = list(),
+      on_disk = !is.null(checkpoint_path)
+    )
+    # Create checkpoint directory if needed
+    if (!is.null(checkpoint_path) && !dir.exists(checkpoint_path)) {
+      dir.create(checkpoint_path, recursive = TRUE)
+    }
+  }
+
   # Main training loop
   for (epoch in 1:epochs) {
     for (step in 1:steps_per_epoch) {
@@ -379,6 +411,27 @@ dp_gan_trainer <- function(
       }
     }
 
+    # Save checkpoints at specified intervals
+    if (!is.null(checkpoint_epochs) && epoch %% checkpoint_epochs == 0) {
+      if (!is.null(checkpoint_path)) {
+        # Disk-based storage
+        d_path <- file.path(checkpoint_path, sprintf("discriminator_epoch_%04d.pt", epoch))
+        g_path <- file.path(checkpoint_path, sprintf("generator_epoch_%04d.pt", epoch))
+        torch::torch_save(d_net$state_dict(), d_path)
+        torch::torch_save(g_net$state_dict(), g_path)
+        checkpoints$epochs <- c(checkpoints$epochs, epoch)
+        checkpoints$discriminators[[length(checkpoints$discriminators) + 1]] <- d_path
+        checkpoints$generators[[length(checkpoints$generators) + 1]] <- g_path
+      } else {
+        # In-memory storage (clone to avoid reference issues)
+        checkpoints$epochs <- c(checkpoints$epochs, epoch)
+        d_state <- lapply(d_net$state_dict(), function(x) x$clone())
+        g_state <- lapply(g_net$state_dict(), function(x) x$clone())
+        checkpoints$discriminators[[length(checkpoints$discriminators) + 1]] <- d_state
+        checkpoints$generators[[length(checkpoints$generators) + 1]] <- g_state
+      }
+    }
+
     # Check if privacy budget exhausted
     if (accountant$steps >= max_steps) {
       break
@@ -412,6 +465,7 @@ dp_gan_trainer <- function(
     generator_optimizer = g_optim,
     discriminator_optimizer = d_optim,
     losses = losses,
+    checkpoints = checkpoints,
     privacy = list(
       final_epsilon = final_epsilon,
       delta = target_delta,

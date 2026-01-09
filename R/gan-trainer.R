@@ -35,6 +35,9 @@
 #'   "cosine" uses cosine annealing from base_lr to 0 over all epochs.
 #' @param lr_decay_factor Multiplicative factor for learning rate decay. Used with "step" and "exponential" schedules. Defaults to 0.1.
 #' @param lr_decay_steps Number of epochs between learning rate reductions for "step" schedule. Defaults to 50.
+#' @param pac Number of samples to pack together for PacGAN (reduces mode collapse). The discriminator
+#'   sees `pac` samples concatenated together, helping it detect lack of diversity. Must divide batch_size
+#'   evenly. Defaults to 1 (standard GAN, no packing). Common values are 8 or 10.
 #'
 #' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
 #' @export
@@ -90,7 +93,8 @@ gan_trainer <-
            patience = 10,
            lr_schedule = "constant",
            lr_decay_factor = 0.1,
-           lr_decay_steps = 50) {
+           lr_decay_steps = 50,
+           pac = 1) {
 # Set random seeds for reproducibility -----------------------------------------
     if (!is.null(seed)) {
       set.seed(seed)
@@ -124,6 +128,12 @@ gan_trainer <-
     }
     if (lr_decay_steps <= 0) {
       stop("lr_decay_steps must be a positive integer")
+    }
+    if (pac < 1 || pac != as.integer(pac)) {
+      stop("pac must be a positive integer")
+    }
+    if (batch_size %% pac != 0) {
+      stop(sprintf("batch_size (%d) must be divisible by pac (%d)", batch_size, pac))
     }
 
     # Validate device availability
@@ -228,12 +238,14 @@ gan_trainer <-
     }
 
     if (is.null(discriminator)) {
+      # For PacGAN, discriminator input is data_dim * pac (packed samples)
+      d_input_dim <- data_dim * pac
       if(value_function != "original") {
       d_net <-
-        Discriminator(data_dim = data_dim, dropout_rate = 0.5)$to(device = device)
+        Discriminator(data_dim = d_input_dim, dropout_rate = 0.5)$to(device = device)
       } else {
         d_net <-
-          Discriminator(data_dim = data_dim, dropout_rate = 0.5, sigmoid = TRUE)$to(device = device)
+          Discriminator(data_dim = d_input_dim, dropout_rate = 0.5, sigmoid = TRUE)$to(device = device)
       }
     } else {
       d_net <- discriminator
@@ -332,7 +344,8 @@ gan_trainer <-
         value_fct,
         weight_clipper,
         gp_lambda = if (value_function == "wgan-gp") gp_lambda else 0,
-        track_loss
+        track_loss,
+        pac
       )
 
       if(track_loss & length(losses) == 0){
@@ -497,7 +510,8 @@ gan_trainer <-
                       patience = patience,
                       lr_schedule = lr_schedule,
                       lr_decay_factor = lr_decay_factor,
-                      lr_decay_steps = lr_decay_steps)
+                      lr_decay_steps = lr_decay_steps,
+                      pac = pac)
     )
     class(output) <- "trained_RGAN"
     return(
@@ -525,6 +539,7 @@ gan_trainer <-
 #' @param weight_clipper The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.
 #' @param gp_lambda The gradient penalty coefficient for WGAN-GP. Set to 0 to disable. Defaults to 0.
 #' @param track_loss Store the training losses as additional output. Defaults to FALSE.
+#' @param pac Number of samples to pack together for PacGAN. Defaults to 1 (no packing).
 #' @return A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL
 #' @export
 gan_update_step <-
@@ -540,7 +555,8 @@ gan_update_step <-
            value_function,
            weight_clipper,
            gp_lambda = 0,
-           track_loss = FALSE) {
+           track_loss = FALSE,
+           pac = 1) {
     # Get a fresh batch of data ------------------------------------------------
     real_data <- get_batch(data, batch_size, device)
 
@@ -549,15 +565,26 @@ gan_update_step <-
       sample_noise(c(batch_size, noise_dim))$to(device = device)
     # Produce fake data from noise ---------------------------------------------
     fake_data <- torch::with_no_grad(g_net(input = z))
+
+    # Pack samples for PacGAN --------------------------------------------------
+    if (pac > 1) {
+      real_data_packed <- pack_samples(real_data, pac)
+      fake_data_packed <- pack_samples(fake_data, pac)
+    } else {
+      real_data_packed <- real_data
+      fake_data_packed <- fake_data
+    }
+
     # Compute the discriminator scores on real and fake data -------------------
-    dis_real <- d_net(real_data)
-    dis_fake <- d_net(fake_data)
+    dis_real <- d_net(real_data_packed)
+    dis_fake <- d_net(fake_data_packed)
     # Calculate the discriminator loss
     d_loss <- value_function(dis_real, dis_fake)[["d_loss"]]
 
     # Add gradient penalty for WGAN-GP -----------------------------------------
+    # Note: GP is computed on unpacked samples for proper gradient computation
     if (gp_lambda > 0) {
-      gp <- gradient_penalty(d_net, real_data, fake_data$detach(), device)
+      gp <- gradient_penalty(d_net, real_data_packed, fake_data_packed$detach(), device)
       d_loss <- d_loss + gp_lambda * gp
     }
 
@@ -580,8 +607,15 @@ gan_update_step <-
     # Produce fake data --------------------------------------------------------
     fake_data <- g_net(z)
 
+    # Pack samples for PacGAN --------------------------------------------------
+    if (pac > 1) {
+      fake_data_packed <- pack_samples(fake_data, pac)
+    } else {
+      fake_data_packed <- fake_data
+    }
+
     # Calculate discriminator score for fake data ------------------------------
-    dis_fake <- d_net(fake_data)
+    dis_fake <- d_net(fake_data_packed)
     # Get generator loss based on scores ---------------------------------------
     g_loss <- value_function(dis_real, dis_fake)[["g_loss"]]
     # What follows is one update step for the generator net --------------------
@@ -725,6 +759,34 @@ get_batch <- function(dataset, batch_size, device = "cpu") {
     use_replace <- batch_size > n_rows
     dataset[sample(n_rows, size = batch_size, replace = use_replace)]$to(device = device)
   }
+}
+
+
+#' @title Pack Samples for PacGAN
+#'
+#' @description Reshapes a batch of samples for PacGAN by concatenating `pac`
+#'   consecutive samples along the feature dimension. This allows the discriminator
+#'   to see multiple samples at once, helping it detect mode collapse.
+#'
+#' @param data A torch tensor of shape (batch_size, data_dim)
+#' @param pac Number of samples to pack together. batch_size must be divisible by pac.
+#'
+#' @return A torch tensor of shape (batch_size/pac, data_dim*pac)
+#' @keywords internal
+pack_samples <- function(data, pac) {
+  if (pac == 1) {
+    return(data)
+  }
+
+  batch_size <- data$shape[1]
+  data_dim <- data$shape[2]
+
+  # Reshape from (batch_size, data_dim) to (batch_size/pac, pac*data_dim)
+  # First reshape to (batch_size/pac, pac, data_dim)
+  # Then flatten the last two dimensions
+  packed <- data$view(c(batch_size %/% pac, pac * data_dim))
+
+  return(packed)
 }
 
 

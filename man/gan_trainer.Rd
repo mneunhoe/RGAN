@@ -34,7 +34,8 @@ gan_trainer(
   patience = 10,
   lr_schedule = "constant",
   lr_decay_factor = 0.1,
-  lr_decay_steps = 50
+  lr_decay_steps = 50,
+  pac = 1
 )
 }
 \arguments{
@@ -100,6 +101,10 @@ gan_trainer(
 \item{lr_decay_factor}{Multiplicative factor for learning rate decay. Used with "step" and "exponential" schedules. Defaults to 0.1.}
 
 \item{lr_decay_steps}{Number of epochs between learning rate reductions for "step" schedule. Defaults to 50.}
+
+\item{pac}{Number of samples to pack together for PacGAN (reduces mode collapse). The discriminator
+sees \code{pac} samples concatenated together, helping it detect lack of diversity. Must divide batch_size
+evenly. Defaults to 1 (standard GAN, no packing). Common values are 8 or 10.}
 }
 \value{
 gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.

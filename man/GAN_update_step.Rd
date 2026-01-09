@@ -17,7 +17,8 @@ gan_update_step(
   value_function,
   weight_clipper,
   gp_lambda = 0,
-  track_loss = FALSE
+  track_loss = FALSE,
+  pac = 1
 )
 }
 \arguments{
@@ -46,6 +47,8 @@ gan_update_step(
 \item{gp_lambda}{The gradient penalty coefficient for WGAN-GP. Set to 0 to disable. Defaults to 0.}
 
 \item{track_loss}{Store the training losses as additional output. Defaults to FALSE.}
+
+\item{pac}{Number of samples to pack together for PacGAN. Defaults to 1 (no packing).}
 }
 \value{
 A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL

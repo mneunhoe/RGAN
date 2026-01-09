@@ -149,6 +149,9 @@ print.trained_RGAN <- function(x, ...) {
     }
     cat("\n")
   }
+  if (!is.null(x$settings$pac) && x$settings$pac > 1) {
+    cat(sprintf("  PacGAN: enabled (pac=%d)\n", x$settings$pac))
+  }
   cat("\n")
 
   # Network architecture - count parameters

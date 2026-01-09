@@ -4,10 +4,23 @@
 # RGAN
 
 <!-- badges: start -->
+[![CRAN status](https://www.r-pkg.org/badges/version/RGAN)](https://CRAN.R-project.org/package=RGAN)
+[![R-CMD-check](https://github.com/mneunhoe/RGAN/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/mneunhoe/RGAN/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 
 The goal of RGAN is to facilitate training and experimentation with
-Generative Adversarial Nets (GAN) in R. 
+Generative Adversarial Nets (GAN) in R. RGAN provides tools for
+generating synthetic tabular data with state-of-the-art techniques
+including differential privacy and post-GAN boosting.
+
+## Features
+
+- **Easy GAN Training**: Train GANs on tabular data with a single function call
+- **Differentially Private Training**: Train GANs with formal privacy guarantees using DP-SGD
+- **Post-GAN Boosting**: Improve synthetic data quality using discriminator ensembles
+- **Flexible Data Transformation**: Support for continuous, categorical, and mixed data types with mode-specific normalization
+- **Multiple Architectures**: Built-in support for various generator and discriminator architectures
+- **Loss Functions**: WGAN-GP, standard GAN, KL-WGAN, and more
 
 ## Installation
 
@@ -160,3 +173,82 @@ res_cont <- gan_trainer(transformed_data,
 #> Training the GAN ■■■■■■■■■■■■■■■■                  50% | ETA:  2s
 #> Training the GAN ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■  100% | ETA:  0s
 ```
+
+## Differentially Private Training
+
+RGAN supports training GANs with formal differential privacy guarantees
+using DP-SGD:
+
+``` r
+# Train with differential privacy
+dp_gan <- dp_gan_trainer(
+  transformed_data,
+  epochs = 50,
+  epsilon = 1.0,           # Privacy budget
+  delta = 1e-5,            # Privacy parameter
+  noise_multiplier = 1.1,  # Noise for DP-SGD
+  max_grad_norm = 1.0      # Gradient clipping bound
+)
+```
+
+See `vignette("dp-gan-training")` for details on privacy parameters and
+best practices.
+
+## Post-GAN Boosting
+
+Improve synthetic data quality using discriminator ensembles captured
+during training:
+
+``` r
+# Train with checkpointing
+trained_gan <- gan_trainer(
+  transformed_data,
+  checkpoint_epochs = 10  # Save checkpoints every 10 epochs
+)
+
+# Apply post-GAN boosting
+boosted <- apply_post_gan_boosting(
+  trained_gan,
+  real_data = transformed_data,
+  transformer = transformer
+)
+```
+
+See `vignette("post-gan-boosting")` for the full workflow and DP
+boosting options.
+
+## Vignettes
+
+RGAN includes detailed vignettes covering advanced usage:
+
+- **[Training a State-of-the-Art GAN on the Adult
+  Dataset](https://mneunhoe.github.io/RGAN/articles/adult-sota-gan.html)**:
+  Complete example with mixed data types, WGAN-GP, and PacGAN
+- **[Training GANs with Differential
+  Privacy](https://mneunhoe.github.io/RGAN/articles/dp-gan-training.html)**:
+  Privacy-preserving GAN training with DP-SGD
+- **[Improving Synthetic Data Quality with Post-GAN
+  Boosting](https://mneunhoe.github.io/RGAN/articles/post-gan-boosting.html)**:
+  Using discriminator ensembles to select high-quality samples
+
+Browse all vignettes with `browseVignettes("RGAN")`.
+
+## Citation
+
+If you use RGAN in your research, please cite:
+
+    @software{neunhoeffer2024rgan,
+      author = {Neunhoeffer, Marcel},
+      title = {RGAN: Generative Adversarial Nets in R},
+      year = {2024},
+      url = {https://github.com/mneunhoe/RGAN}
+    }
+
+For the post-GAN boosting methodology:
+
+    @inproceedings{neunhoeffer2021private,
+      title={Private Post-GAN Boosting},
+      author={Neunhoeffer, Marcel and Wu, Zhiwei Steven and Dwork, Cynthia},
+      booktitle={International Conference on Learning Representations},
+      year={2021}
+    }

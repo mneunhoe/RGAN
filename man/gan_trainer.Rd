@@ -10,6 +10,13 @@ gan_trainer(
   noise_distribution = "normal",
   value_function = "original",
   gp_lambda = 10,
+  regularization = NULL,
+  adam_betas = NULL,
+  discriminator_dropout = 0.5,
+  instance_noise = NULL,
+  augmentation = NULL,
+  conditioning = NULL,
+  distillation = NULL,
   data_type = "tabular",
   generator = NULL,
   generator_optimizer = NULL,
@@ -54,9 +61,188 @@ gan_trainer(
 
 \item{noise_distribution}{The noise distribution. Expects a function that samples from a distribution and returns a torch_tensor. For convenience "normal" and "uniform" will automatically set a function. Defaults to "normal".}
 
-\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".}
+\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience the loss functions "original", "non-saturating", "hinge", "wasserstein", "wgan-gp", "f-wgan" and "rpgan" are already implemented. Defaults to "original".
+Only "original" uses a sigmoid output layer on the default discriminator; every other built-in
+value function (including "non-saturating", "hinge" and "rpgan") works on logits.}
 
-\item{gp_lambda}{The gradient penalty coefficient for WGAN-GP training. Only used when value_function is "wgan-gp". Defaults to 10.}
+\item{gp_lambda}{The gradient penalty coefficient for WGAN-GP training. Only used when value_function is "wgan-gp" and \code{regularization} is NULL. Defaults to 10. Superseded by \code{regularization}.}
+
+\item{regularization}{Optional discriminator regularization, given as a list with the fields
+\code{type} (one of "none", "wgan-gp", "r1", "r2", "r1r2"), \code{gamma} (the penalty coefficient,
+default 10) and \code{lazy_interval} (an integer >= 1, default 1: the penalty is only applied on
+every \code{lazy_interval}-th discriminator step and is then scaled by \code{lazy_interval}, the lazy
+regularization of StyleGAN2). "r1" penalizes the squared gradient norm of the discriminator
+with respect to real inputs, "r2" the same with respect to fake inputs, "r1r2" both; the
+penalty added to the discriminator loss is \code{gamma / 2} times the penalty (see \code{\link[=r1_penalty]{r1_penalty()}}).
+Defaults to NULL, which preserves the previous behaviour: a WGAN-GP penalty with coefficient
+\code{gp_lambda} if \code{value_function == "wgan-gp"} and \code{gp_lambda > 0}, and no penalty otherwise.
+If \code{regularization} is supplied it takes precedence over \code{gp_lambda}, and a warning is issued
+if an explicitly supplied \code{gp_lambda} disagrees with it.}
+
+\item{adam_betas}{Optional numeric vector of length 2 with the Adam beta coefficients used for
+both default optimizers, e.g. \code{c(0, 0.99)} as in R3GAN. Defaults to NULL, which keeps torch's
+own default of \code{c(0.9, 0.999)}. Only used if no optimizer is explicitly passed to the trainer.}
+
+\item{discriminator_dropout}{Dropout rate of the default discriminator. Defaults to 0.5. Set to 0
+to train without dropout (as R3GAN does). Only used if \code{discriminator} is NULL.}
+
+\item{instance_noise}{Optional adaptive instance noise, given as a list. Defaults to NULL
+(no instance noise; the training path is then bit-identical to the previous behaviour).
+The mechanism is Diffusion-GAN (Wang et al., ICLR 2023, arXiv:2206.02262), simplified to
+plain Gaussian noise without the diffusion mixture: the trainer maintains a noise ceiling
+\code{T} in \verb{[sigma_min, sigma_max]}, and on every discriminator step draws one
+\code{sigma ~ U(sigma_min, T)} for the whole batch and adds \code{N(0, sigma^2)} noise to both the
+real and the fake batch \emph{before} PacGAN packing and before the discriminator. The R1/R2/GP
+penalties see exactly the same noised (and packed) tensors. The generator step adds noise
+with the same \code{sigma} to its fake batch, and the gradient flows through the noise addition.
+Fields (with defaults):
+\describe{
+\item{\code{sigma_max}}{Upper bound of the noise ceiling. Default 0.5.}
+\item{\code{sigma_min}}{Lower bound of the noise ceiling. Default 0.}
+\item{\code{adaptive}}{Adapt \code{T} during training? Default TRUE. \code{T} starts at \code{sigma_min} when
+adaptive and at \code{sigma_max} otherwise.}
+\item{\code{target_rd}}{Target for the discriminator-overfitting statistic \code{r_d}, a number in
+\verb{[-1, 1]}. Default 0.6. How \code{r_d} is measured depends on what the discriminator output
+means under the chosen value function (see \code{\link[=resolve_rd_mode]{resolve_rd_mode()}}):
+for relativistic (paired) losses such as \code{"rpgan"}, and for the Wasserstein/critic
+family (\code{"wasserstein"}, \code{"wgan-gp"}, \code{"f-wgan"}), the absolute level of \code{D} is
+unconstrained -- only \code{D(real) - D(fake)} enters the loss -- so
+\code{r_d = mean(sign(D(real_i) - D(fake_i)))} over the paired batch, that is the fraction of
+correctly ranked pairs mapped to \verb{[-1, 1]};
+for \code{"original"}, whose default discriminator has a sigmoid output,
+\code{r_d = mean(sign(D(real) - 0.5))};
+for the zero-anchored logit losses \code{"non-saturating"} and \code{"hinge"},
+\code{r_d = mean(sign(D(real)))}, the original ADA statistic of Karras et al. (2020).
+A user-supplied value function uses the paired definition when it carries the attribute
+\code{requires_real_scores = TRUE} and \code{mean(sign(D(real)))} otherwise. In every case the
+scores are those of the noised and augmented batch the discriminator was just trained
+on.}
+\item{\code{per_type}}{Use a per-column noise scale derived from \code{output_info}? Default TRUE:
+categorical blocks (\code{"softmax"}, \code{"cossin"}) and the mode-indicator sub-block of a
+\code{"mode_specific"} block get a multiplier of 0.5, numeric columns 1. This is a simple
+per-type schedule inspired by CDTD (Mueller et al., ICLR 2025), not CDTD's learned
+schedule. If \code{output_info} is NULL every column counts as numeric.}
+\item{\code{condition_d}}{Append the current \code{sigma} as an extra input column to the
+discriminator? Default FALSE. With TRUE the default discriminator's input dimension
+becomes \code{data_dim * pac + 1}; a custom \code{discriminator} must then be built with that
+extra input itself.}
+\item{\code{update_every}}{Number of discriminator steps between adaptations of \code{T}.
+Default 4. Every \code{update_every} steps \code{T} moves by \code{sigma_max / 100} up if
+\code{r_d > target_rd} and down otherwise, clamped to \verb{[sigma_min, sigma_max]}.}
+}}
+
+\item{augmentation}{Optional adaptive differentiable augmentation of the discriminator inputs,
+given as a list. Defaults to NULL (no augmentation). Augmentation is applied to both the real
+and the fake batch, after the instance noise and before packing, and the gradient flows
+through it for the fake batch, as ADA requires (Karras et al., NeurIPS 2020). Fields (with
+defaults):
+\describe{
+\item{\code{p_max}}{Upper bound of the augmentation probability. Default 0.5.}
+\item{\code{adaptive}}{Adapt \code{p} during training? Default TRUE. \code{p} starts at 0 when adaptive
+and at \code{p_max} otherwise.}
+\item{\code{target_rd}}{Target for the same \code{r_d} statistic used by \code{instance_noise}, whose
+definition depends on the value function; see the \code{target_rd} field of
+\code{instance_noise} above and \code{\link[=resolve_rd_mode]{resolve_rd_mode()}}. Default 0.6.}
+\item{\code{ops}}{Subset of \code{c("mask", "mixup", "swap")}, see \code{\link[=augment_batch]{augment_batch()}}.
+Default all three.}
+\item{\code{update_every}}{Number of discriminator steps between adaptations of \code{p}.
+Default 4; the step size is \code{p_max / 100}, clamped to \verb{[0, p_max]}.}
+}}
+
+\item{conditioning}{Optional any-order conditioning of the generator and the
+discriminator, given as a list. Defaults to NULL (unconditional training;
+the training path is then bit-identical to the previous behaviour).
+Requires \code{output_info} and a matrix / tensor \code{data}.
+This is Experiment 5 of the 2026 experiment plan: CTGAN's conditional
+vector with training-by-sampling (Xu et al., NeurIPS 2019) and the
+TabMT / TabularARGN random-mask any-order variant (report item T3) with
+classifier-free-guidance style condition dropout (report item L7).
+
+The condition of a row is \verb{[mask, masked values]}: a 0/1 mask of length
+\code{n_blocks}, one entry per column block of the transformed matrix (the
+blocks of \code{\link[=output_info_blocks]{output_info_blocks()}}, so a \code{"mode_specific"} column
+contributes a mode-indicator block and a value block, and both are always
+observed together), followed by the row's transformed values with the
+columns of every unobserved block set to zero (length \code{data_dim}). The
+generator input is \code{cat(z, condition)} and the discriminator input is
+\code{cat(row, condition)} per sample, appended \emph{before} PacGAN packing. The
+fake rows of a step use the same conditions as the real rows, as in CTGAN,
+so the discriminator compares \verb{(real, cond)} against \verb{(fake, cond)}.
+Fields (with defaults):
+\describe{
+\item{\code{type}}{\code{"single_column"} (CTGAN: the mask observes exactly one
+categorical block, and the real batch is sampled \emph{by} that condition)
+or \code{"random_mask"} (a random observed subset per row, whose values are
+the real row's own values). Default \code{"random_mask"}.}
+\item{\code{mask_prob}}{\code{"uniform"} (default; a per-row Bernoulli mask whose
+rate is drawn \code{U(0, 1)} per row, so every masking rate is trained) or
+a fixed numeric rate. Only used by \code{"random_mask"}.}
+\item{\code{cond_dropout}}{Probability that a row's condition is replaced by
+the all-unobserved mask, in both the discriminator and the generator
+step. Default 0.1. This is what makes unconditional sampling from a
+conditionally trained model well defined.}
+\item{\code{log_frequency}}{Draw categories with probability proportional to
+\code{log(count + 1)} instead of their frequency, CTGAN's device against
+rare-level collapse. Default TRUE.}
+\item{\code{resample_rare}}{Only for \code{"random_mask"}: \code{TRUE} (or a fraction)
+makes a fraction of the rows of every batch be re-drawn by a
+log-frequency category of one of their observed categorical blocks, so
+that rare levels are conditioned on far more often than their
+empirical frequency. The \emph{real row} is re-drawn (not only the
+condition values), so the \verb{(real row, condition)} pair the
+discriminator sees stays consistent. Default FALSE;
+\code{resample_rare_frac} defaults to 0.5.}
+\item{\code{consistency_weight}}{Weight of the consistency loss added to the
+generator loss (see \code{\link[=conditioning_consistency_loss]{conditioning_consistency_loss()}}): cross-entropy
+on observed categorical blocks, mean squared error on observed numeric
+and \code{"cossin"} blocks, averaged over the observed cells. Default 1.}
+}
+A custom \code{generator} must accept the concatenated
+\code{noise_dim + n_blocks + data_dim} input, and a custom \code{discriminator} the
+\code{pac * (data_dim + n_blocks + data_dim)} input (for a
+\code{\link[=TokenDiscriminator]{TokenDiscriminator()}} set \code{extra_inputs = n_blocks + data_dim}).}
+
+\item{distillation}{Optional Diffusion2GAN-style pair-regression distillation from a
+flow-matching teacher, given as a list. Defaults to NULL (no distillation; the training
+path is then bit-identical to the previous behaviour). This is Experiment 6 of the 2026
+experiment plan (report item L5), the recipe of Kang et al. (ECCV 2024, arXiv:2405.05967).
+
+The teacher's ODE is a deterministic map from noise \code{z} to a sample \code{x_hat}. Every
+generator step draws a minibatch of those pairs and adds
+\code{lambda * weighted_mean_loss(G(z_i), x_hat_i)} to the generator loss. The adversarial part
+is untouched: it still uses a \emph{fresh} noise draw and the real data batch, so the
+discriminator never sees the teacher's output as "real". The pairs only pull the
+generator's noise-to-data map towards the teacher's, which is what lets a one-step
+student inherit the teacher's coverage.
+
+Fields (with defaults):
+\describe{
+\item{\code{pairs}}{A list \code{list(z = matrix, x = matrix)} from \code{\link[=flow_pairs]{flow_pairs()}}. If NULL the
+pairs are generated from \code{teacher}.}
+\item{\code{teacher}}{A trained teacher of class \code{"trained_RFlow"}. Used to generate \code{pairs}
+when they are not supplied, and to refresh them when \code{refresh_every} is set. A bare
+\code{"trained_RFlow"} object passed as \code{distillation} is shorthand for
+\verb{list(teacher = <that object>)}.}
+\item{\code{n_pairs}}{Number of pairs to generate from \code{teacher}. Default \code{4 * nrow(data)}.}
+\item{\code{n_steps}}{ODE steps per pair batch. Default 50.}
+\item{\code{solver}}{\code{"heun"} (default) or \code{"euler"}.}
+\item{\code{refresh_every}}{Regenerate the pairs from \code{teacher} every this many epochs.
+Default NULL (one fixed pair set for the whole run).}
+\item{\code{lambda}}{Weight of the regression term. Default 10.}
+\item{\code{loss}}{\code{"mse"} (default) or \code{"huber"}; \code{huber_delta} (default 1) sets the
+transition point.}
+\item{\code{per_type_weight}}{Weight the per-column residual by \code{\link[=flow_loss_weights]{flow_loss_weights()}}, the
+CDTD-style calibration that stops a wide one-hot block from dominating a single
+numeric column. Default TRUE.}
+\item{\code{adversarial}}{Default TRUE. With FALSE the discriminator step is skipped
+entirely (\code{n_d_steps} stays 0) and the generator is trained on the regression term
+alone: the pure-regression ablation, arm F3 of the plan.}
+\item{\code{noise_match}}{Default TRUE: the regression term feeds the teacher's own \code{z} to
+the generator, which requires \code{noise_dim == ncol(pairs$z)} and errors otherwise.
+FALSE draws fresh noise instead, which breaks the pairing and leaves only a
+distribution-level pull towards the teacher's samples; it exists as an ablation.}
+}
+See \code{\link[=distill_to_gan]{distill_to_gan()}} for a wrapper that builds the pairs and sets \code{noise_dim} for you.}
 
 \item{data_type}{"tabular" or "image", controls the data type, defaults to "tabular".}
 
@@ -146,7 +332,7 @@ checkpoints are stored in memory only. If provided, checkpoints are saved to dis
 post-GAN boosting for large training runs with many checkpoints.}
 }
 \value{
-gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings.
+gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings. With \code{conditioning} the returned object additionally carries \code{conditioning_meta}, the per-block metadata (\code{blocks}, block-to-column mapping, categorical block ids, category values, counts and log-frequency tables) that \code{\link[=sample_synthetic_data]{sample_synthetic_data()}} and \code{\link[=impute_synthetic]{impute_synthetic()}} need to build conditions at sampling time. The settings include the resolved \code{regularization}, \code{instance_noise}, \code{augmentation} and \code{conditioning} lists, the final noise ceiling \code{noise_T_final} and augmentation probability \code{aug_p_final}, and \code{n_d_steps}, the total number of discriminator updates performed (useful to equalise training budgets across arms), \code{n_g_steps}, the number of generator updates, and the resolved \code{distillation} recipe (without the pair matrices themselves). With \code{track_loss = TRUE} the trajectories of the noise ceiling and the augmentation probability are returned as \code{losses$noise_T} and \code{losses$aug_p}, and the pair-regression term as \code{losses$distill_loss}.
 }
 \description{
 Provides a function to quickly train a GAN model.

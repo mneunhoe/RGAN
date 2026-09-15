@@ -2,23 +2,41 @@
 % Please edit documentation in R/generator-architectures.R
 \name{SelfAttention}
 \alias{SelfAttention}
-\title{Self-Attention Layer for Tabular Data}
+\title{Hidden-Vector Slice Mixing Layer}
 \usage{
 SelfAttention(embed_dim, num_heads = 4, dropout = 0.1)
 }
 \arguments{
-\item{embed_dim}{The dimension of the input embeddings (hidden layer size)}
+\item{embed_dim}{The dimension of the input hidden vector (hidden layer size)}
 
-\item{num_heads}{Number of attention heads. Must divide embed_dim evenly. Defaults to 4.}
+\item{num_heads}{Number of slices the hidden vector is split into, which is
+also the attention sequence length. Must divide embed_dim evenly; if it
+does not, the largest divisor in \code{c(1, 2, 4, 8, 16)} is used instead.
+Defaults to 4.}
 
 \item{dropout}{Dropout rate for attention weights. Defaults to 0.1.}
 }
 \value{
-A torch::nn_module for self-attention
+A torch::nn_module for hidden-vector slice mixing
 }
 \description{
-Multi-head self-attention layer that captures relationships between
-features in the hidden representation. This allows the generator to learn
-dependencies between different columns (e.g., age correlates with income).
+Multi-head attention over the \code{num_heads} equal-sized \strong{slices of
+one hidden vector}. This is \emph{not} attention over column tokens.
+
+The layer takes a \verb{(batch, embed_dim)} hidden activation, splits it into
+\code{num_heads} slices of width \code{embed_dim / num_heads}, treats those slices as
+a sequence of length \code{num_heads}, and lets them attend to each other; the
+result is flattened back to \verb{(batch, embed_dim)} and added to the input
+under a layer norm. It therefore mixes parts of the hidden representation,
+a form of learned gating, but it has no notion of data columns and cannot
+represent a per-column dependency structure.
+
+Earlier versions of this documentation claimed the layer "captures
+relationships between features" and learns dependencies between columns.
+That was wrong: nothing in the layer is aligned with the columns of the
+data. The layer is kept unchanged for backward compatibility (it is what
+\code{TabularGenerator(attention = TRUE)} builds) and only the description is
+corrected. For genuine per-column attention use \code{\link[=TokenGenerator]{TokenGenerator()}} on the
+generator side and \code{\link[=TokenDiscriminator]{TokenDiscriminator()}} on the critic side.
 }
 \keyword{internal}

@@ -184,8 +184,104 @@ print.trained_RGAN <- function(x, ...) {
   cat(sprintf("  Base learning rate: %s\n", format(x$settings$base_lr, scientific = FALSE)))
   cat(sprintf("  Device: %s\n", x$settings$device))
 
-  if (x$settings$value_function == "wgan-gp") {
+  if (is.character(x$settings$value_function) &&
+      length(x$settings$value_function) == 1 &&
+      x$settings$value_function == "wgan-gp") {
     cat(sprintf("  GP lambda: %s\n", x$settings$gp_lambda))
+  }
+  reg <- x$settings$regularization
+  if (!is.null(reg) && !identical(reg$type, "none")) {
+    cat(sprintf("  Regularization: %s (gamma=%s", reg$type, format(reg$gamma)))
+    if (!is.null(reg$lazy_interval) && reg$lazy_interval > 1) {
+      cat(sprintf(", lazy_interval=%d", as.integer(reg$lazy_interval)))
+    }
+    cat(")\n")
+  }
+  if (!is.null(x$settings$adam_betas)) {
+    cat(sprintf("  Adam betas: (%s)\n",
+                paste(format(x$settings$adam_betas), collapse = ", ")))
+  }
+  ins <- x$settings$instance_noise
+  if (!is.null(ins)) {
+    cat(sprintf("  Instance noise: %s (sigma in [%s, %s]",
+                if (isTRUE(ins$adaptive)) "adaptive" else "fixed",
+                format(ins$sigma_min), format(ins$sigma_max)))
+    if (isTRUE(ins$per_type)) cat(", per-type")
+    if (isTRUE(ins$condition_d)) cat(", D conditioned on sigma")
+    cat(")\n")
+    if (!is.null(x$settings$noise_T_final)) {
+      cat(sprintf("    final noise ceiling T: %s\n",
+                  format(x$settings$noise_T_final, digits = 3)))
+    }
+  }
+  aug <- x$settings$augmentation
+  if (!is.null(aug)) {
+    cat(sprintf("  Augmentation: %s (p_max=%s, ops: %s)\n",
+                if (isTRUE(aug$adaptive)) "adaptive" else "fixed",
+                format(aug$p_max), paste(aug$ops, collapse = ", ")))
+    if (!is.null(x$settings$aug_p_final)) {
+      cat(sprintf("    final augmentation probability p: %s\n",
+                  format(x$settings$aug_p_final, digits = 3)))
+    }
+  }
+  cnd <- x$settings$conditioning
+  if (!is.null(cnd)) {
+    cat(sprintf("  Conditioning: %s (cond_dim=%s, cond_dropout=%s, consistency_weight=%s%s%s)\n",
+                cnd$type,
+                format(x$settings$cond_dim),
+                format(cnd$cond_dropout),
+                format(cnd$consistency_weight),
+                if (identical(cnd$type, "random_mask")) {
+                  sprintf(", mask_prob=%s", if (is.character(cnd$mask_prob)) {
+                    cnd$mask_prob
+                  } else {
+                    format(cnd$mask_prob)
+                  })
+                } else if (isTRUE(cnd$log_frequency)) {
+                  ", log-frequency sampler"
+                } else {
+                  ""
+                },
+                if (isTRUE(cnd$resample_rare)) {
+                  sprintf(", resample_rare=%s", format(cnd$resample_rare_frac))
+                } else {
+                  ""
+                }))
+  }
+  if ((!is.null(ins) && isTRUE(ins$adaptive)) ||
+      (!is.null(aug) && isTRUE(aug$adaptive))) {
+    vf <- x$settings$value_function
+    rd_mode <- resolve_rd_mode(
+      vf,
+      isTRUE(attr(vf, "requires_real_scores")) || identical(vf, "rpgan")
+    )
+    cat(sprintf("    adaptive signal r_d: %s\n", switch(
+      rd_mode,
+      "paired"  = "mean(sign(D(real) - D(fake))) [paired / critic loss]",
+      "sigmoid" = "mean(sign(D(real) - 0.5)) [sigmoid output]",
+      "mean(sign(D(real))) [zero-anchored logit]"
+    )))
+  }
+  dst <- x$settings$distillation
+  if (!is.null(dst)) {
+    cat(sprintf("  Distillation: pair regression (lambda=%s, %s loss, %s pairs%s%s)\n",
+                format(dst$lambda), dst$loss,
+                format(dst$n_pairs, big.mark = ","),
+                if (isTRUE(dst$adversarial)) "" else ", no adversarial term",
+                if (isTRUE(dst$noise_match)) "" else ", noise not matched"))
+    if (!is.null(dst$refresh_every)) {
+      cat(sprintf("    pairs refreshed every %d epochs (%d %s steps)\n",
+                  as.integer(dst$refresh_every), as.integer(dst$n_steps),
+                  dst$solver))
+    }
+  }
+  if (!is.null(x$settings$n_d_steps)) {
+    cat(sprintf("  Discriminator steps: %s\n",
+                format(x$settings$n_d_steps, big.mark = ",")))
+  }
+  if (!is.null(x$settings$n_g_steps)) {
+    cat(sprintf("  Generator steps: %s\n",
+                format(x$settings$n_g_steps, big.mark = ",")))
   }
   if (x$settings$early_stopping) {
     cat(sprintf("  Early stopping: enabled (patience=%d)\n", x$settings$patience))

@@ -158,17 +158,35 @@ forward = function(input) {
   )
 
 
-#' @title Self-Attention Layer for Tabular Data
+#' @title Hidden-Vector Slice Mixing Layer
 #'
-#' @description Multi-head self-attention layer that captures relationships between
-#'   features in the hidden representation. This allows the generator to learn
-#'   dependencies between different columns (e.g., age correlates with income).
+#' @description Multi-head attention over the `num_heads` equal-sized **slices of
+#'   one hidden vector**. This is *not* attention over column tokens.
 #'
-#' @param embed_dim The dimension of the input embeddings (hidden layer size)
-#' @param num_heads Number of attention heads. Must divide embed_dim evenly. Defaults to 4.
+#'   The layer takes a `(batch, embed_dim)` hidden activation, splits it into
+#'   `num_heads` slices of width `embed_dim / num_heads`, treats those slices as
+#'   a sequence of length `num_heads`, and lets them attend to each other; the
+#'   result is flattened back to `(batch, embed_dim)` and added to the input
+#'   under a layer norm. It therefore mixes parts of the hidden representation,
+#'   a form of learned gating, but it has no notion of data columns and cannot
+#'   represent a per-column dependency structure.
+#'
+#'   Earlier versions of this documentation claimed the layer "captures
+#'   relationships between features" and learns dependencies between columns.
+#'   That was wrong: nothing in the layer is aligned with the columns of the
+#'   data. The layer is kept unchanged for backward compatibility (it is what
+#'   `TabularGenerator(attention = TRUE)` builds) and only the description is
+#'   corrected. For genuine per-column attention use [TokenGenerator()] on the
+#'   generator side and [TokenDiscriminator()] on the critic side.
+#'
+#' @param embed_dim The dimension of the input hidden vector (hidden layer size)
+#' @param num_heads Number of slices the hidden vector is split into, which is
+#'   also the attention sequence length. Must divide embed_dim evenly; if it
+#'   does not, the largest divisor in `c(1, 2, 4, 8, 16)` is used instead.
+#'   Defaults to 4.
 #' @param dropout Dropout rate for attention weights. Defaults to 0.1.
 #'
-#' @return A torch::nn_module for self-attention
+#' @return A torch::nn_module for hidden-vector slice mixing
 #' @keywords internal
 SelfAttention <- torch::nn_module(
   initialize = function(embed_dim, num_heads = 4, dropout = 0.1) {
@@ -199,19 +217,16 @@ SelfAttention <- torch::nn_module(
   },
 
   forward = function(x) {
-    # x shape: (batch_size, embed_dim)
-    # For tabular data, we treat the hidden representation as a single "token"
-    # and apply self-attention across the feature dimension
+    # x shape: (batch_size, embed_dim). The "sequence" is the num_heads
+    # slices of that single hidden vector -- not the columns of the data.
 
     batch_size <- x$shape[1]
 
     # Store residual
     residual <- x
 
-    # Reshape for multi-head attention: (batch, 1, embed_dim) -> treat as sequence of 1
-    # Actually for tabular, we can reshape features into groups
-    # Let's reshape (batch, embed_dim) -> (batch, num_heads, head_dim)
-    # and apply attention across head dimension
+    # Reshape (batch, embed_dim) -> (batch, num_heads, head_dim) and attend
+    # across the slice dimension.
 
     # Project to Q, K, V
     q <- self$q_proj(x)$view(c(batch_size, self$num_heads, self$head_dim))
@@ -336,13 +351,21 @@ ResidualBlock <- torch::nn_module(
 #'     \item \strong{Layer Normalization:} Alternative that works better with small batches
 #'     \item \strong{Multiple activation functions:} ReLU, LeakyReLU, GELU, SiLU
 #'     \item \strong{Weight initialization:} Xavier or Kaiming initialization
-#'     \item \strong{Self-Attention:} Captures relationships between features
+#'     \item \strong{Self-Attention:} Hidden-vector slice mixing (see
+#'       [SelfAttention()]; for attention over column tokens use
+#'       [TokenGenerator()])
 #'     \item \strong{Progressive Training:} Gradually increase network capacity
 #'   }
 #'
 #' @param noise_dim The length of the noise vector per example
 #' @param output_info A list describing the output structure from data_transformer$output_info.
-#'   Each element is a list with (dimension, type) where type is "linear", "mode_specific", or "softmax".
+#'   Each element is a list with (dimension, type) where type is one of
+#'   `"linear"` (tanh head), `"mode_specific"` (Gumbel-Softmax mode indicator
+#'   plus tanh value), `"softmax"` (Gumbel-Softmax), `"quantile"` (plain linear
+#'   head, because Gaussian quantile-transformed columns are unbounded) or
+#'   `"cossin"` (two outputs projected onto the unit circle, TabRep-style).
+#'   The type `"index"` produced by `categorical_encoding = "embedding_ready"`
+#'   has no head here and raises an error.
 #' @param hidden_units A list of the number of neurons per layer. Defaults to list(256, 256)
 #'   as used in CTGAN.
 #' @param dropout_rate The dropout rate for each hidden layer. Only used when
@@ -365,6 +388,10 @@ ResidualBlock <- torch::nn_module(
 #' @param attention_heads Number of attention heads. Must divide hidden layer size evenly.
 #'   Defaults to 4.
 #' @param attention_dropout Dropout rate for attention weights. Defaults to 0.1.
+#' @param cond_dim Width of an optional condition vector appended to the noise
+#'   (see the `conditioning` argument of [gan_trainer()]). Defaults to 0, which
+#'   leaves the architecture unchanged. With `cond_dim > 0` the module's input
+#'   is the `noise_dim + cond_dim` wide concatenation `cat(z, condition)`.
 #'
 #' @return A torch::nn_module for the Tabular Generator
 #' @export
@@ -406,9 +433,19 @@ TabularGenerator <- torch::nn_module(
                         residual = TRUE,
                         attention = FALSE,
                         attention_heads = 4,
-                        attention_dropout = 0.1) {
+                        attention_dropout = 0.1,
+                        cond_dim = 0) {
+
+    if (!is.numeric(cond_dim) || length(cond_dim) != 1 || is.na(cond_dim) ||
+        cond_dim < 0 || cond_dim != as.integer(cond_dim)) {
+      stop("cond_dim must be a non-negative integer")
+    }
+    cond_dim <- as.integer(cond_dim)
 
     # Store parameters for forward pass
+    self$noise_dim <- as.integer(noise_dim)
+    self$cond_dim <- cond_dim
+    self$input_dim <- as.integer(noise_dim) + cond_dim
     self$output_info <- output_info
     self$tau <- tau
     self$training_mode <- TRUE
@@ -444,6 +481,9 @@ TabularGenerator <- torch::nn_module(
       stop(sprintf("init_method must be one of: %s", paste(valid_inits, collapse = ", ")))
     }
 
+    # Validate the output_info head types (shared with TokenGenerator)
+    validate_output_heads(output_info, module = "TabularGenerator")
+
     # Calculate total output dimension
     data_dim <- sum(sapply(output_info, function(x) x[[1]]))
     self$data_dim <- data_dim
@@ -453,7 +493,7 @@ TabularGenerator <- torch::nn_module(
     self$attention_blocks <- torch::nn_module_list()
     self$attention_block_indices <- list()  # Maps block index to attention block index
 
-    dim <- noise_dim
+    dim <- self$input_dim
     attn_idx <- 1
     for (i in seq_along(hidden_units)) {
       neurons <- hidden_units[[i]]
@@ -497,7 +537,7 @@ TabularGenerator <- torch::nn_module(
     self$output_layers <- torch::nn_module_list()
     self$block_output_dims <- c()
 
-    block_dim <- noise_dim
+    block_dim <- self$input_dim
     for (i in seq_along(hidden_units)) {
       block_dim <- hidden_units[[i]]
       self$block_output_dims <- c(self$block_output_dims, block_dim)
@@ -526,6 +566,10 @@ TabularGenerator <- torch::nn_module(
   },
 
   forward = function(input, hard = NULL) {
+    if (!is.null(self$input_dim) && input$shape[2] != self$input_dim) {
+      stop(sprintf("TabularGenerator expects an input of width %d (noise_dim = %d, cond_dim = %d) but got %d",
+                   self$input_dim, self$noise_dim, self$cond_dim, input$shape[2]))
+    }
     # Pass through residual blocks (with progressive training support)
     data <- input
     num_active <- min(self$active_blocks, length(self$blocks))
@@ -545,48 +589,9 @@ TabularGenerator <- torch::nn_module(
     # This ensures correct dimensions during progressive training
     data <- self$output_layers[[num_active]](data)
 
-    # Apply appropriate activation to each output block
-    outputs <- list()
-    start_idx <- 1
-
-    for (info in self$output_info) {
-      dim <- info[[1]]
-      col_type <- info[[2]]
-      end_idx <- start_idx + dim - 1
-
-      # Slice the relevant columns
-      col_data <- data[, start_idx:end_idx]
-
-      if (col_type == "softmax") {
-        # Apply Gumbel-Softmax for categorical columns
-        use_hard <- if (!is.null(hard)) hard else !self$training
-        col_data <- gumbel_softmax(col_data, tau = self$tau, hard = use_hard, dim = 2)
-      } else if (col_type == "linear") {
-        # For standard continuous columns, apply tanh to bound output
-        col_data <- torch::torch_tanh(col_data)
-      } else if (col_type == "mode_specific") {
-        # For mode-specific: first n-1 columns are mode indicators (softmax),
-        # last column is normalized value (tanh)
-        if (dim > 1) {
-          mode_logits <- col_data[, 1:(dim - 1)]
-          value <- col_data[, dim, drop = FALSE]
-
-          use_hard <- if (!is.null(hard)) hard else !self$training
-          mode_probs <- gumbel_softmax(mode_logits, tau = self$tau, hard = use_hard, dim = 2)
-          value <- torch::torch_tanh(value)
-
-          col_data <- torch::torch_cat(list(mode_probs, value), dim = 2)
-        } else {
-          col_data <- torch::torch_tanh(col_data)
-        }
-      }
-
-      outputs[[length(outputs) + 1]] <- col_data
-      start_idx <- end_idx + 1
-    }
-
-    # Concatenate all outputs
-    return(torch::torch_cat(outputs, dim = 2))
+    # Apply the per-block output activations (shared with TokenGenerator).
+    return(apply_output_heads(data, self$output_info, tau = self$tau,
+                              hard = hard, training = self$training))
   },
 
   # Set number of active blocks for progressive training (1 to num_blocks)
@@ -601,5 +606,273 @@ TabularGenerator <- torch::nn_module(
   # Get current number of active blocks
   get_active_blocks = function() {
     return(self$active_blocks)
+  }
+)
+
+
+#' @title Validate generator output_info head types
+#'
+#' @description Internal validator shared by [TabularGenerator()] and
+#'   [TokenGenerator()]. Checks that every `output_info` element is a
+#'   `list(dimension, type)` with a type this package has a generator head for,
+#'   and that `"cossin"` blocks are two-dimensional.
+#'
+#' @param output_info The `output_info` list of a fitted [data_transformer()].
+#' @param module Name of the calling module, used in the error messages.
+#'
+#' @return `invisible(TRUE)`; called for its side effect of erroring.
+#' @keywords internal
+validate_output_heads <- function(output_info, module = "TabularGenerator") {
+  valid_output_types <- c("linear", "mode_specific", "softmax", "quantile", "cossin")
+  if (!is.list(output_info) || length(output_info) == 0) {
+    stop("output_info must be a non-empty list")
+  }
+  for (info in output_info) {
+    if (!is.list(info) || length(info) < 2) {
+      stop("Each element of output_info must be a list with at least 2 elements (dimension, type)")
+    }
+    col_type <- info[[2]]
+    if (identical(col_type, "index")) {
+      stop(paste0("output_info type 'index' (categorical_encoding = ",
+                  "'embedding_ready') has no ", module, " head. Use ",
+                  "categorical_encoding = 'onehot' or 'cossin', or a ",
+                  "generator with a learned embedding."))
+    }
+    if (!col_type %in% valid_output_types) {
+      stop(sprintf("output_info type must be one of: %s",
+                   paste(valid_output_types, collapse = ", ")))
+    }
+    if (identical(col_type, "cossin") && !identical(as.numeric(info[[1]]), 2)) {
+      stop("output_info blocks of type 'cossin' must have dimension 2")
+    }
+  }
+  invisible(TRUE)
+}
+
+
+#' @title Apply the per-block generator output heads
+#'
+#' @description Internal helper that applies the activation of each
+#'   `output_info` block to the corresponding slice of a generator's raw
+#'   `(batch, data_dim)` output. It is the single implementation used by both
+#'   [TabularGenerator()] and [TokenGenerator()], so the two generators are
+#'   guaranteed to emit values in the same space.
+#'
+#'   The heads are:
+#'   \itemize{
+#'     \item `"softmax"`: Gumbel-Softmax over the block, temperature `tau`.
+#'     \item `"mode_specific"`: Gumbel-Softmax over the first `dim - 1` mode
+#'       indicators, `tanh` on the last (normalised value) column. A
+#'       one-dimensional block degenerates to a plain `tanh`.
+#'     \item `"linear"`: `tanh`, because z-scored columns are bounded in
+#'       practice.
+#'     \item `"quantile"`: no activation. Gaussian quantile-transformed columns
+#'       are unbounded and a `tanh` would pile generated mass on the clipping
+#'       value exactly in the tails the representation is meant to fix.
+#'     \item `"cossin"`: the two outputs are projected onto the unit circle
+#'       (`x / (||x|| + 1e-8)`), the TabRep head, so the generator can only emit
+#'       points the encoding can produce.
+#'   }
+#'
+#' @param data The raw `(batch, data_dim)` generator output (torch_tensor).
+#' @param output_info The `output_info` list describing the column blocks.
+#' @param tau Gumbel-Softmax temperature.
+#' @param hard `TRUE`/`FALSE` to force hard or soft Gumbel-Softmax samples, or
+#'   `NULL` (default) to use hard samples exactly when the module is not in
+#'   training mode.
+#' @param training The module's training flag, used when `hard` is `NULL`.
+#'
+#' @return A `(batch, data_dim)` torch_tensor with the heads applied.
+#' @keywords internal
+apply_output_heads <- function(data, output_info, tau = 0.2, hard = NULL,
+                               training = TRUE) {
+  outputs <- list()
+  start_idx <- 1
+
+  for (info in output_info) {
+    dim <- info[[1]]
+    col_type <- info[[2]]
+    end_idx <- start_idx + dim - 1
+
+    col_data <- data[, start_idx:end_idx]
+
+    if (col_type == "softmax") {
+      use_hard <- if (!is.null(hard)) hard else !training
+      col_data <- gumbel_softmax(col_data, tau = tau, hard = use_hard, dim = 2)
+    } else if (col_type == "quantile") {
+      col_data <- col_data
+    } else if (col_type == "cossin") {
+      norm <- torch::torch_sqrt(torch::torch_sum(col_data^2, dim = 2, keepdim = TRUE))
+      col_data <- col_data / (norm + 1e-8)
+    } else if (col_type == "linear") {
+      col_data <- torch::torch_tanh(col_data)
+    } else if (col_type == "mode_specific") {
+      if (dim > 1) {
+        mode_logits <- col_data[, 1:(dim - 1)]
+        value <- col_data[, dim, drop = FALSE]
+
+        use_hard <- if (!is.null(hard)) hard else !training
+        mode_probs <- gumbel_softmax(mode_logits, tau = tau, hard = use_hard, dim = 2)
+        value <- torch::torch_tanh(value)
+
+        col_data <- torch::torch_cat(list(mode_probs, value), dim = 2)
+      } else {
+        col_data <- torch::torch_tanh(col_data)
+      }
+    }
+
+    outputs[[length(outputs) + 1]] <- col_data
+    start_idx <- end_idx + 1
+  }
+
+  torch::torch_cat(outputs, dim = 2)
+}
+
+
+#' @title Column-Token Generator with Attention
+#'
+#' @description A generator that expands the noise vector into one token per
+#'   data column, runs transformer blocks over those tokens, and decodes each
+#'   token with its own linear head. It is the generator-side counterpart of
+#'   [TokenDiscriminator()] and the T1 architecture of the 2026 research report
+#'   (FCT-GAN / TabTransGAN style), as opposed to the hidden-vector slice mixing
+#'   of [SelfAttention()] that `TabularGenerator(attention = TRUE)` uses.
+#'
+#'   The forward pass is
+#'   \enumerate{
+#'     \item `nn_linear(noise_dim + cond_dim, n_cols * d_model)` on the noise
+#'       (concatenated with a condition vector when `cond_dim > 0`), reshaped to
+#'       `(batch, n_cols, d_model)`;
+#'     \item plus a learned column-ID embedding (and no positional encoding, so
+#'       the architecture is permutation equivariant in the columns);
+#'     \item `n_layers` pre-LayerNorm transformer blocks with ViTGAN L2
+#'       attention by default (Lee et al., ICLR 2022, arXiv:2107.04589);
+#'     \item a final LayerNorm and a per-column head `nn_linear(d_model, dim_j)`;
+#'     \item the same per-block output activations as [TabularGenerator()]
+#'       (Gumbel-Softmax, tanh, identity or unit-circle projection, see
+#'       [apply_output_heads()]).
+#'   }
+#'
+#'   The output is a `(batch, data_dim)` tensor in exactly the space of
+#'   `transformer$transform(data)`, so `TokenGenerator` is a drop-in replacement
+#'   for `TabularGenerator` in [gan_trainer()] and
+#'   [sample_synthetic_data()].
+#'
+#' @param noise_dim The length of the noise vector per example.
+#' @param output_info A list describing the output structure, the `output_info`
+#'   of a fitted [data_transformer()]. Each element is a list
+#'   `list(dimension, type)` with type one of `"linear"`, `"mode_specific"`,
+#'   `"softmax"`, `"quantile"` or `"cossin"`. The type `"index"` has no head
+#'   and raises an error.
+#' @param d_model Token width. Defaults to 64.
+#' @param n_heads Number of attention heads; must divide `d_model`. Defaults to 4.
+#' @param n_layers Number of transformer blocks. Defaults to 2.
+#' @param attention `"l2"` (default, ViTGAN) or `"dot"`.
+#' @param tau Temperature for the Gumbel-Softmax heads. Defaults to 0.2.
+#' @param dropout Dropout rate inside the transformer blocks. Defaults to 0.
+#' @param cond_dim Width of an optional condition vector appended to the noise.
+#'   Defaults to 0. When positive, `forward()` expects an input of width
+#'   `noise_dim + cond_dim`.
+#'
+#' @references
+#'   Lee, K., Chang, H., Jiang, L., Zhang, H., Tu, Z. & Liu, C. (2022). ViTGAN:
+#'   Training GANs with Vision Transformers. *ICLR 2022*. arXiv:2107.04589.
+#'
+#'   Zhao, Z., Birke, R. & Chen, L. Y. (2023). FCT-GAN: Enhancing Global
+#'   Correlation of Table Synthesis via Fourier Transform. arXiv:2210.06239.
+#'
+#' @return A torch::nn_module for the column-token generator.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' transformer <- data_transformer$new()
+#' transformer$fit(data, discrete_columns = c("sex", "income"),
+#'                 continuous_transform = "quantile",
+#'                 categorical_encoding = "cossin")
+#' transformed <- transformer$transform(data)
+#'
+#' g_net <- TokenGenerator(noise_dim = 128,
+#'                         output_info = transformer$output_info,
+#'                         d_model = 64, n_layers = 2, attention = "l2")
+#' d_net <- TokenDiscriminator(transformer$output_info, attention = "l2")
+#'
+#' trained <- gan_trainer(transformed,
+#'                        generator = g_net,
+#'                        discriminator = d_net,
+#'                        output_info = transformer$output_info,
+#'                        noise_dim = 128,
+#'                        value_function = "rpgan",
+#'                        regularization = list(type = "r1r2", gamma = 10))
+#' }
+TokenGenerator <- torch::nn_module(
+  classname = "TokenGenerator",
+  initialize = function(noise_dim,
+                        output_info,
+                        d_model = 64,
+                        n_heads = 4,
+                        n_layers = 2,
+                        attention = c("l2", "dot"),
+                        tau = 0.2,
+                        dropout = 0.0,
+                        cond_dim = 0) {
+    attention <- match.arg(attention)
+    validate_output_heads(output_info, module = "TokenGenerator")
+    if (n_layers < 1) stop("n_layers must be at least 1")
+    if (cond_dim < 0) stop("cond_dim must be a non-negative integer")
+
+    self$output_info <- output_info
+    self$tau <- tau
+    self$d_model <- d_model
+    self$cond_dim <- as.integer(cond_dim)
+    self$noise_dim <- as.integer(noise_dim)
+
+    dims <- vapply(output_info, function(x) as.integer(x[[1]]), integer(1))
+    self$block_dims <- dims
+    self$n_cols <- length(dims)
+    self$data_dim <- sum(dims)
+
+    self$input_proj <- torch::nn_linear(noise_dim + cond_dim,
+                                        self$n_cols * d_model)
+    self$col_embedding <- torch::nn_embedding(self$n_cols, d_model)
+    self$col_ids <- torch::nn_buffer(
+      torch::torch_tensor(seq_len(self$n_cols), dtype = torch::torch_long())
+    )
+
+    self$blocks <- torch::nn_module_list()
+    for (i in seq_len(n_layers)) {
+      self$blocks$append(TokenTransformerBlock(d_model, n_heads, attention, dropout))
+    }
+    self$n_layers <- as.integer(n_layers)
+
+    self$final_norm <- torch::nn_layer_norm(d_model)
+    self$heads <- torch::nn_module_list()
+    for (d in dims) self$heads$append(torch::nn_linear(d_model, d))
+  },
+
+  forward = function(input, hard = NULL) {
+    batch <- input$shape[1]
+    expected <- self$noise_dim + self$cond_dim
+    if (input$shape[2] != expected) {
+      stop(sprintf("TokenGenerator expects an input of width %d (noise_dim = %d, cond_dim = %d) but got %d",
+                   expected, self$noise_dim, self$cond_dim, input$shape[2]))
+    }
+
+    h <- self$input_proj(input)$reshape(c(batch, self$n_cols, self$d_model))
+    h <- h + self$col_embedding(self$col_ids)$reshape(c(1, self$n_cols, self$d_model))
+
+    for (i in seq_len(self$n_layers)) {
+      h <- self$blocks[[i]](h)
+    }
+    h <- self$final_norm(h)
+
+    parts <- vector("list", self$n_cols)
+    for (j in seq_len(self$n_cols)) {
+      parts[[j]] <- self$heads[[j]](h[, j, ])
+    }
+    data <- torch::torch_cat(parts, dim = 2)
+
+    apply_output_heads(data, self$output_info, tau = self$tau, hard = hard,
+                       training = self$training)
   }
 )

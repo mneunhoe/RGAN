@@ -599,7 +599,9 @@ apply_post_gan_boosting <- function(trained_gan,
       normalization = trained_gan$settings$generator_normalization,
       activation = trained_gan$settings$generator_activation,
       init_method = trained_gan$settings$generator_init,
-      residual = trained_gan$settings$generator_residual
+      residual = trained_gan$settings$generator_residual,
+      # Conditionally trained generators take cat(z, condition) as input.
+      cond_dim = if (is.null(trained_gan$settings$cond_dim)) 0 else trained_gan$settings$cond_dim
     )
   } else {
     g_template <- Generator(noise_dim = noise_dim, data_dim = data_dim, dropout_rate = 0.5)
@@ -618,6 +620,15 @@ apply_post_gan_boosting <- function(trained_gan,
 
     # Generate samples
     z <- sample_noise(c(n_candidates, noise_dim))$to(device = device)
+    # Conditionally trained generators are sampled with the all-unobserved
+    # condition (the mode cond_dropout trains).
+    cd <- trained_gan$settings$cond_dim
+    if (!is.null(cd) && cd > 0) {
+      z <- torch::torch_cat(
+        list(z, torch::torch_zeros(c(n_candidates, cd),
+                                   device = z$device)$to(dtype = z$dtype)),
+        dim = 2)
+    }
     samples <- torch::with_no_grad({
       torch::as_array(g_template(z)$cpu())
     })

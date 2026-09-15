@@ -57,24 +57,75 @@ the normalized value (clipped to [-1, 1]).
 Significantly improves GAN performance on real-world tabular data.
 }
 
+\subsection{Gaussian Quantile Transform}{
+
+With \code{continuous_transform = "quantile"} each continuous column is mapped
+through its own empirical CDF and then through \code{qnorm()}, so the transformed
+column is approximately standard normal whatever the shape of the original
+distribution. This is the numeric representation used by the diffusion models
+TabDDPM and TabSyn (Kotelnikov et al., 2023).
+
+The CDF is stored as a table of at most \code{n_quantiles} empirical quantiles.
+Both directions are a linear interpolation over that table (\code{approx()} with
+\code{rule = 2}), so the round trip is exact for values inside the fitted range;
+the CDF position is clipped to [1e-4, 1 - 1e-4] to keep \code{qnorm()} finite,
+which means the two extreme values are reconstructed approximately.
+Constant columns are handled (they map to 0 and back to their value).
+
+\strong{Output dimensions}: one column, \code{output_info} type \code{"quantile"}.
+}
+
 }
 
 \subsection{Categorical Columns}{
+\subsection{One-hot (default)}{
 
 Categorical (discrete) columns are one-hot encoded. Each category becomes a
 separate binary column. The inverse transform selects the category with the
-highest value (argmax).
+highest value (argmax). \code{output_info} type \code{"softmax"}.
+}
+
+\subsection{cos/sin (TabRep)}{
+
+With \code{categorical_encoding = "cossin"} the \code{K} levels of a column are placed
+equidistantly on the unit circle: level \eqn{c \in 1..K} becomes
+\eqn{(\cos(2\pi(c-1)/K), \sin(2\pi(c-1)/K))} (Hsi et al., 2025). A column
+costs two output dimensions regardless of its cardinality, which matters for
+high-cardinality columns, and the generator needs no Gumbel-Softmax.
+The inverse takes \code{atan2()} of the two outputs and snaps to the nearest level
+by circular distance. \code{output_info} type \code{"cossin"}.
+
+The distance each row had to be snapped, in units of the inter-level angle
+\eqn{2\pi/K}, is summarised per column in \code{last_snap_stats} after each
+\code{inverse_transform()} call (mean, 90th percentile, number of rows and \code{K}).
+Large snap distances indicate that the generator is not landing near the
+level positions.
+}
+
+\subsection{Integer index (embedding-ready)}{
+
+With \code{categorical_encoding = "embedding_ready"} the column stays a single
+integer index in 1..K, \code{output_info} type \code{"index"}. This is a data path for
+a future learned-embedding generator; \code{TabularGenerator} has no head for it
+and rejects the type.
+}
+
 }
 
 \subsection{Fields}{
 
 After fitting, the transformer stores:
 \describe{
-\item{meta}{List of metadata for each column (means, stds, levels, etc.)}
+\item{meta}{List of metadata for each column (means, stds, levels, quantile tables, etc.)}
 \item{output_info}{List describing the output structure for each column}
 \item{output_dimensions}{Total number of columns in transformed data}
 \item{mode_specific}{Whether mode-specific normalization was used}
 \item{n_modes}{Number of GMM modes (if mode_specific = TRUE)}
+\item{continuous_transform}{The resolved continuous representation}
+\item{categorical_encoding}{The categorical representation}
+\item{n_quantiles}{Size of the quantile reference table}
+\item{last_snap_stats}{Named list of cos/sin snap diagnostics from the most
+recent \code{inverse_transform()} call}
 }
 }
 
@@ -238,6 +289,13 @@ reconstructed_data <- transformer$inverse_transform(transformed_data)
 Xu, L., Skoularidou, M., Cuesta-Infante, A., & Veeramachaneni, K. (2019).
 Modeling tabular data using conditional GAN. Advances in Neural Information
 Processing Systems, 32.
+
+Kotelnikov, A., Baranchuk, D., Rubachev, I., & Babenko, A. (2023).
+TabDDPM: Modelling tabular data with diffusion models. ICML. (Source of the
+Gaussian quantile transform used here and in TabSyn.)
+
+Hsi, J., et al. (2025). TabRep: Training tabular diffusion models with a
+simple and effective continuous representation. arXiv:2504.04798.
 }
 \section{Methods}{
 \subsection{Public methods}{
@@ -275,7 +333,9 @@ Fit parameters for a continuous column (internal method)
   column = NULL,
   data = NULL,
   mode_specific = FALSE,
-  n_modes = 10
+  n_modes = 10,
+  continuous_transform = NULL,
+  n_quantiles = 1000
 )}\if{html}{\out{</div>}}
 }
 
@@ -286,9 +346,16 @@ Fit parameters for a continuous column (internal method)
 
 \item{\code{data}}{Column data as a single-column matrix}
 
-\item{\code{mode_specific}}{Whether to use GMM-based normalization}
+\item{\code{mode_specific}}{Whether to use GMM-based normalization. Kept for
+backward compatibility; ignored when \code{continuous_transform} is given.}
 
 \item{\code{n_modes}}{Number of GMM components}
+
+\item{\code{continuous_transform}}{One of \code{"zscore"}, \code{"mode_specific"} or
+\code{"quantile"}. When NULL it is derived from \code{mode_specific}.}
+
+\item{\code{n_quantiles}}{Size of the empirical quantile reference table used by
+the \code{"quantile"} transform.}
 }
 \if{html}{\out{</div>}}
 }
@@ -299,7 +366,11 @@ Fit parameters for a continuous column (internal method)
 \subsection{Method \code{fit_discrete()}}{
 Fit parameters for a discrete/categorical column (internal method)
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_discrete(column = NULL, data = NULL)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_discrete(
+  column = NULL,
+  data = NULL,
+  categorical_encoding = "onehot"
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -308,6 +379,9 @@ Fit parameters for a discrete/categorical column (internal method)
 \item{\code{column}}{Column name or index}
 
 \item{\code{data}}{Column data as a single-column matrix}
+
+\item{\code{categorical_encoding}}{One of \code{"onehot"} (default), \code{"cossin"} or
+\code{"embedding_ready"}.}
 }
 \if{html}{\out{</div>}}
 }
@@ -326,7 +400,10 @@ Must be called before \code{transform()} or \code{inverse_transform()}.
   data,
   discrete_columns = NULL,
   mode_specific = FALSE,
-  n_modes = 10
+  n_modes = 10,
+  continuous_transform = NULL,
+  categorical_encoding = "onehot",
+  n_quantiles = 1000
 )}\if{html}{\out{</div>}}
 }
 
@@ -350,6 +427,29 @@ Defaults to FALSE (standard z-score normalization).}
 \item{\code{n_modes}}{Integer. Maximum number of Gaussian components for GMM fitting.
 The actual number may be lower if modes with weight < 0.01 are pruned.
 Only used when \code{mode_specific = TRUE}. Defaults to 10.}
+
+\item{\code{continuous_transform}}{Character, one of \code{"zscore"},
+\code{"mode_specific"} or \code{"quantile"}. Selects the representation of the
+continuous columns and supersedes \code{mode_specific}. When \code{NULL} (the
+default) it is derived from \code{mode_specific} so that existing code keeps
+its behaviour. If both are supplied and disagree,
+\code{continuous_transform} wins and a warning is emitted.
+\code{"quantile"} maps each column through its empirical CDF and \code{qnorm()},
+the Gaussian quantile transform used by TabDDPM and TabSyn
+(Kotelnikov et al. 2023). It produces one output column with
+\code{output_info} type \code{"quantile"}.}
+
+\item{\code{categorical_encoding}}{Character, one of \code{"onehot"} (the default and
+the previous behaviour, \code{output_info} type \code{"softmax"}), \code{"cossin"}
+(TabRep, Hsi et al. 2025: level \code{c} of \code{K} becomes
+\verb{(cos(2*pi*(c-1)/K), sin(2*pi*(c-1)/K))}, two output columns,
+\code{output_info} type \code{"cossin"}) or \code{"embedding_ready"} (a single integer
+index column, \code{output_info} type \code{"index"}, intended as the data path
+for a learned-embedding generator; no generator head exists for it).}
+
+\item{\code{n_quantiles}}{Integer. Size of the empirical quantile reference table
+stored per column when \code{continuous_transform = "quantile"}.
+Defaults to 1000.}
 }
 \if{html}{\out{</div>}}
 }

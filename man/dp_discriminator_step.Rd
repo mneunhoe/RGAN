@@ -51,4 +51,22 @@ Scalar loss value
 Perform one DP-SGD update step for the discriminator with
 per-sample gradient clipping and secure Gaussian noise.
 }
+\details{
+The quantity released to the optimizer is the Poisson-subsampled sum of
+per-sample gradients, each clipped to L2 norm \code{max_grad_norm}, perturbed
+by Gaussian noise of scale \code{noise_multiplier * max_grad_norm}, and then
+divided by the \emph{expected} batch size \code{sampling_rate * n_samples}.
+
+The divisor must not depend on the realised batch size. The privacy analysis
+-- and the accountant in \code{rdp_sgm()} -- covers the noisy \emph{sum}
+only; dividing by a constant is post-processing and so is free, but dividing
+by \code{length(batch_indices)} would make both the location and the scale of
+the released quantity depend on how many records the Poisson draw selected.
+That count is itself data-dependent under add/remove-one adjacency, and its
+contribution to the privacy loss is not accounted for by the Sampled Gaussian
+Mechanism bound.
+
+For the same reason an empty Poisson draw is not a free step: the mechanism
+still releases noise, and the accountant still charges for it.
+}
 \keyword{internal}

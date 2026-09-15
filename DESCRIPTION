@@ -1,6 +1,6 @@
 Package: RGAN
 Title: Generative Adversarial Nets (GAN) in R
-Version: 0.2.1
+Version: 0.2.2
 Authors@R: 
     person(given = "Marcel",
            family = "Neunhoeffer",

@@ -494,6 +494,310 @@ dp_gan_trainer <- function(
 }
 
 
+#' @title Numerically Stable log-sum-exp
+#'
+#' @param x Numeric vector of log-scale terms.
+#' @return \code{log(sum(exp(x)))}, computed without overflow.
+#' @keywords internal
+log_sum_exp <- function(x) {
+  m <- max(x)
+  if (!is.finite(m)) return(m)
+  m + log(sum(exp(x - m)))
+}
+
+
+#' @title Log-Space Addition and Subtraction
+#'
+#' @param a,b Log-scale scalars.
+#' @return \code{log(exp(a) + exp(b))} and \code{log(exp(a) - exp(b))}.
+#' @keywords internal
+#' @name log_arith
+NULL
+
+#' @rdname log_arith
+log_add_exp <- function(a, b) {
+  if (!is.finite(a) && a < 0) return(b)
+  if (!is.finite(b) && b < 0) return(a)
+  m <- max(a, b)
+  m + log1p(exp(-abs(a - b)))
+}
+
+#' @rdname log_arith
+log_sub_exp <- function(a, b) {
+  if (!is.finite(b) && b < 0) return(a)
+  if (a <= b) return(-Inf)
+  a + log1p(-exp(b - a))
+}
+
+#' @title Log of the Complementary Error Function
+#'
+#' @description \code{log(erfc(x))}, evaluated through the normal distribution
+#'   function so that it stays accurate deep in the tail where \code{erfc}
+#'   itself underflows.
+#'
+#' @param x Numeric vector.
+#' @return \code{log(erfc(x))}.
+#' @keywords internal
+log_erfc <- function(x) log(2) + stats::pnorm(-x * sqrt(2), log.p = TRUE)
+
+
+#' @title Log Moment of the Sampled Gaussian at an Integer Order
+#'
+#' @param q Poisson sampling rate in (0, 1).
+#' @param sigma Noise multiplier.
+#' @param alpha Integer order, at least 2.
+#' @return \code{log A_alpha}.
+#' @keywords internal
+log_moment_sgm_int <- function(q, sigma, alpha) {
+  k <- 0:alpha
+  log_sum_exp(lchoose(alpha, k) +
+                (alpha - k) * log1p(-q) +
+                k * log(q) +
+                k * (k - 1) / (2 * sigma^2))
+}
+
+
+#' @title Log Moment of the Sampled Gaussian at a Fractional Order
+#'
+#' @description For non-integer orders the binomial expansion no longer
+#'   terminates. The real line is split at \code{z0}, where the two components
+#'   of the mixture cross, and the moment is summed as two series whose terms
+#'   carry Gaussian tail factors.
+#'
+#' @details
+#' The terms decay only polynomially, as \code{i^-(alpha + 2)}: the Gaussian
+#' factor and the complementary error function very nearly cancel, leaving the
+#' binomial coefficient's own decay. An absolute threshold on the term size is
+#' therefore the wrong stopping rule -- at \code{alpha = 1.25} it would need
+#' about \code{1e10} terms -- so the series stops on a bound for the whole
+#' remaining tail instead. Since the terms are eventually decreasing, that tail
+#' is at most \code{i * term_i}, which is the conservative estimate used here
+#' (the true tail is smaller by a factor of about \code{alpha + 1}).
+#'
+#' Coefficients alternate in sign beyond \code{ceiling(alpha)}. Positive and
+#' negative contributions are accumulated separately and subtracted once, which
+#' avoids repeated cancellation in log space; the single final subtraction is
+#' benign because neither total is much larger than the result.
+#'
+#' @param q Poisson sampling rate in (0, 1).
+#' @param sigma Noise multiplier.
+#' @param alpha Non-integer order, greater than 1.
+#' @param max_terms Safety cap on the number of series terms.
+#' @param reltol Relative accuracy required of the truncated tail.
+#' @return \code{log A_alpha}.
+#' @keywords internal
+log_moment_sgm_frac <- function(q, sigma, alpha, max_terms = 100000L,
+                                reltol = 1e-10) {
+  z0 <- sigma^2 * log(1 / q - 1) + 0.5
+  log_pos <- -Inf
+  log_neg <- -Inf
+  converged <- FALSE
+  block <- 2048L
+  start <- 0
+
+  repeat {
+    # Doubles, not integers: the term needs i^2, which overflows R's 32-bit
+    # integer type past i = 46341 and would silently become NA.
+    i <- start + as.numeric(seq_len(block)) - 1
+    coef <- choose(alpha, i)
+    log_coef <- log(abs(coef))
+    j <- alpha - i
+
+    log_s0 <- log_coef + i * log(q) + j * log1p(-q) +
+      (i * i - i) / (2 * sigma^2) +
+      log(0.5) + log_erfc((i - z0) / (sqrt(2) * sigma))
+    log_s1 <- log_coef + j * log(q) + i * log1p(-q) +
+      (j * j - j) / (2 * sigma^2) +
+      log(0.5) + log_erfc((z0 - j) / (sqrt(2) * sigma))
+
+    terms <- c(log_s0, log_s1)
+    if (anyNA(terms)) {
+      stop("The series for the sampled-Gaussian moment at order ", alpha,
+           " produced a non-finite term (q = ", q, ", sigma = ", sigma, ").",
+           call. = FALSE)
+    }
+
+    # `coef == 0` marks a terminating expansion (integer alpha reached through
+    # this path); those terms are -Inf and contribute nothing.
+    add <- coef > 0
+    sub <- coef < 0
+    if (any(add)) {
+      log_pos <- log_add_exp(log_pos, log_sum_exp(c(log_s0[add], log_s1[add])))
+    }
+    if (any(sub)) {
+      log_neg <- log_add_exp(log_neg, log_sum_exp(c(log_s0[sub], log_s1[sub])))
+    }
+
+    total <- log_sub_exp(log_pos, log_neg)
+    last <- max(log_s0[block], log_s1[block])
+
+    # Bound the remaining tail by i * term_i and compare it with the running
+    # total. `last == -Inf` is exact termination.
+    if (!is.finite(last) && last < 0) {
+      converged <- TRUE
+      break
+    }
+    if (is.finite(total) && last + log(max(i)) < log(reltol) + total) {
+      converged <- TRUE
+      break
+    }
+
+    start <- start + block
+    if (start >= max_terms) break
+  }
+
+  if (!converged) {
+    stop("The series for the sampled-Gaussian moment at order ", alpha,
+         " did not reach a relative accuracy of ", reltol, " within ",
+         max_terms, " terms (q = ", q, ", sigma = ", sigma,
+         "). Refusing to report a privacy loss that may be understated; ",
+         "use integer orders only.", call. = FALSE)
+  }
+
+  log_sub_exp(log_pos, log_neg)
+}
+
+
+#' @title RDP of the Sampled Gaussian Mechanism
+#'
+#' @description Renyi differential privacy of a single step of the Sampled
+#'   Gaussian Mechanism: Poisson subsampling at rate \code{q} followed by
+#'   Gaussian noise with multiplier \code{sigma} relative to the L2 sensitivity.
+#'
+#' @details
+#' For integer orders \code{alpha >= 2} the Renyi divergence is bounded by
+#' \deqn{\frac{1}{\alpha-1}\log\sum_{k=0}^{\alpha}\binom{\alpha}{k}
+#'   (1-q)^{\alpha-k}q^{k}\exp\!\left(\frac{k(k-1)}{2\sigma^{2}}\right),}
+#' the bound of Mironov, Talwar and Zhang (2019). It follows from expanding the
+#' density ratio \eqn{(1-q) + q\exp((2z-1)/2\sigma^{2})} with the binomial
+#' theorem and applying the Gaussian moment generating function term by term.
+#'
+#' The sum is evaluated in log space, which keeps it finite for the large
+#' exponents that arise when \code{sigma} is small.
+#'
+#' Non-integer orders are supported as well, through the series of
+#' \code{log_moment_sgm_frac()}. They matter: when the optimal order is small,
+#' restricting the search to integers inflates the reported epsilon by up to
+#' 11 percent, because the relative gap between consecutive integer orders is
+#' largest exactly there.
+#'
+#' @section Machine-checked statement:
+#' At integer orders the value returned here is the conclusion of a Lean 4
+#' proof against Mathlib, not only a transcription of the published bound. In
+#' the accompanying formalization the quantity
+#' \code{sum_k choose(a, k) (1-q)^(a-k) q^k exp(k(k-1)/(2 v))} is
+#' \code{sgmMoment q v a} with \code{v = sigma^2}, and:
+#' \itemize{
+#'   \item \code{renyiDiv_sgmMixture} proves \code{log(sgmMoment)/(a-1)} is
+#'     exactly the Renyi divergence of the two-point mixture pair;
+#'   \item \code{renyiDiv_sgmMechanism_le} proves it bounds the divergence of
+#'     the mechanism's own outputs on adjacent datasets -- the subsampling
+#'     reduction of Mironov, Talwar and Zhang, proved rather than assumed.
+#' }
+#' Both are free of \code{sorry} and depend only on \code{propext},
+#' \code{Classical.choice} and \code{Quot.sound}.
+#'
+#' The proof fixes the setting the caller must respect: \strong{add/remove-one
+#' adjacency}; per-record contributions clipped in L2 norm to the sensitivity
+#' that \code{sigma} is measured against; and the release being the noisy
+#' \emph{sum} over the Poisson draw, divided by nothing data-dependent. See
+#' \code{dp_discriminator_step()}.
+#'
+#' Two gaps remain between the proof and this function. The formalization is
+#' carried out for a scalar release, the multivariate case being the same
+#' argument with the Gaussian density in product form; and it covers
+#' \strong{integer orders only}, because the binomial sum is finite only there.
+#' Fractional orders are therefore computed by an uncertified series. They are
+#' checked at run time against the certified integer orders that bracket them,
+#' using monotonicity of the Renyi divergence in its order: a fractional value
+#' must lie between the values at \code{floor(alpha)} and \code{ceiling(alpha)},
+#' and an error is raised if it does not.
+#'
+#' @param q Poisson sampling rate, in \code{[0, 1]}.
+#' @param sigma Noise multiplier, strictly positive.
+#' @param alpha RDP order, any real number greater than 1.
+#' @param validate Check a fractional order against the certified integer
+#'   orders that bracket it. Has no effect at integer orders.
+#'
+#' @return RDP at order \code{alpha} for one step.
+#'
+#' @references
+#' Mironov, I., Talwar, K., & Zhang, L. (2019). Renyi Differential Privacy of
+#' the Sampled Gaussian Mechanism. arXiv:1908.10530.
+#'
+#' @keywords internal
+rdp_sgm <- function(q, sigma, alpha, validate = TRUE) {
+  if (!is.numeric(sigma) || length(sigma) != 1L || !is.finite(sigma) || sigma <= 0) {
+    stop("sigma must be a single positive finite number.", call. = FALSE)
+  }
+  if (!is.numeric(q) || length(q) != 1L || !is.finite(q) || q < 0 || q > 1) {
+    stop("q must be a single number in [0, 1].", call. = FALSE)
+  }
+  if (!is.numeric(alpha) || length(alpha) != 1L || !is.finite(alpha) ||
+      alpha <= 1) {
+    stop("alpha must be a single order greater than 1; got ", alpha, ".",
+         call. = FALSE)
+  }
+
+  # No sampling: nothing is released. Full sampling: no amplification, so the
+  # bound is the plain Gaussian mechanism's alpha / (2 sigma^2).
+  if (q == 0) return(0)
+  if (q == 1) return(alpha / (2 * sigma^2))
+
+  if (isTRUE(all.equal(alpha, round(alpha)))) {
+    a <- as.integer(round(alpha))
+    return(log_moment_sgm_int(q, sigma, a) / (a - 1))
+  }
+
+  value <- log_moment_sgm_frac(q, sigma, alpha) / (alpha - 1)
+  if (validate) check_rdp_bracket(value, q, sigma, alpha)
+  value
+}
+
+
+#' @title Check a Fractional-Order RDP Against the Certified Integer Orders
+#'
+#' @description The Renyi divergence is non-decreasing in its order, so the
+#'   value at a fractional order must lie between the values at the integer
+#'   orders on either side of it. Those are computed by the terminating
+#'   binomial sum, which is the form carrying a Lean proof, so this turns the
+#'   uncertified series into something checked at run time.
+#'
+#' @details Only the upper side of the bracket exists for \code{alpha} in
+#'   \code{(1, 2)}, since order 1 is the KL divergence and is not covered by
+#'   \code{log_moment_sgm_int()}.
+#'
+#' @param value The RDP returned by the series.
+#' @param q Poisson sampling rate.
+#' @param sigma Noise multiplier.
+#' @param alpha Fractional order.
+#'
+#' @return \code{value}, invisibly; raises an error if the bracket fails.
+#'
+#' @keywords internal
+check_rdp_bracket <- function(value, q, sigma, alpha) {
+  int_rdp <- function(a) log_moment_sgm_int(q, sigma, a) / (a - 1)
+  lo_order <- floor(alpha)
+  hi_order <- ceiling(alpha)
+  tol <- 1e-8 * max(1, abs(value))
+
+  if (lo_order >= 2 && value < int_rdp(lo_order) - tol) {
+    stop("The series for the sampled-Gaussian moment at order ", alpha,
+         " returned ", value, ", below the certified value at order ",
+         lo_order, " (", int_rdp(lo_order), "). The Renyi divergence is ",
+         "non-decreasing in its order, so this privacy loss is understated.",
+         call. = FALSE)
+  }
+  if (hi_order >= 2 && value > int_rdp(hi_order) + tol) {
+    stop("The series for the sampled-Gaussian moment at order ", alpha,
+         " returned ", value, ", above the certified value at order ",
+         hi_order, " (", int_rdp(hi_order), ").", call. = FALSE)
+  }
+
+  invisible(value)
+}
+
+
 #' @title RDP Privacy Accountant for Poisson Subsampling
 #'
 #' @description R6 class for tracking privacy loss using Renyi Differential Privacy
@@ -503,6 +807,22 @@ dp_gan_trainer <- function(
 #' Implements the privacy accounting from Mironov (2017) with subsampling
 #' amplification. RDP provides tighter composition than basic composition
 #' and converts to (epsilon, delta)-DP guarantees.
+#'
+#' Every step of the accounting has a machine-checked counterpart in the
+#' accompanying Lean 4 formalization:
+#' \itemize{
+#'   \item the per-step bound is \code{renyiDiv_sgmMechanism_le}; see
+#'     \code{rdp_sgm()} for the setting it assumes;
+#'   \item that RDP adds over the steps of an adaptively chosen sequence is
+#'     \code{renyiDivFin_transcript_le};
+#'   \item the conversion to \code{(epsilon, delta)}-DP is
+#'     \code{approxDP_transcript_cks}, which yields exactly the expression
+#'     \code{get_epsilon()} minimises;
+#'   \item \code{cksEps_le_classicalEps} proves that expression is never worse
+#'     than the classical \code{rdp + log(1 / delta) / (alpha - 1)}.
+#' }
+#' Minimising over a grid of orders is sound because each order gives a valid
+#' guarantee on its own.
 #'
 #' @keywords internal
 dp_accountant_poisson <- R6::R6Class(
@@ -517,15 +837,41 @@ dp_accountant_poisson <- R6::R6Class(
     noise_multiplier = NULL,
     #' @field target_delta Target delta for conversion
     target_delta = NULL,
+    #' @field orders RDP orders searched when converting to (eps, delta)-DP
+    orders = NULL,
+    #' @field certified_only Restrict the search to integer orders, where the
+    #'   per-step bound is machine-checked
+    certified_only = FALSE,
 
     #' @description Create a new privacy accountant
     #' @param sampling_rate Poisson sampling probability
     #' @param noise_multiplier Noise scale relative to sensitivity
     #' @param target_delta Target delta for DP guarantee
-    initialize = function(sampling_rate, noise_multiplier, target_delta = 1e-5) {
+    #' @param orders RDP orders to search. The default grid is fine between 1
+    #'   and 11, where the optimum usually sits and where integer orders are far
+    #'   apart in relative terms, and coarsens above that.
+    #' @param certified_only Keep only the integer orders in \code{orders}. At
+    #'   those the per-step bound is the conclusion of a Lean proof; at
+    #'   fractional orders it is an uncertified series, checked at run time
+    #'   against the integer orders bracketing it. Restricting to integers
+    #'   raises the reported epsilon -- by up to 11 percent when the optimal
+    #'   order is small -- so it trades tightness for a fully checked number.
+    initialize = function(sampling_rate, noise_multiplier, target_delta = 1e-5,
+                          orders = c(seq(1.1, 10.9, by = 0.1), 11:64,
+                                     seq(66, 256, by = 2)),
+                          certified_only = FALSE) {
       self$sampling_rate <- sampling_rate
       self$noise_multiplier <- noise_multiplier
       self$target_delta <- target_delta
+      self$certified_only <- isTRUE(certified_only)
+      if (self$certified_only) {
+        orders <- orders[abs(orders - round(orders)) < 1e-8]
+        if (length(orders) == 0) {
+          stop("certified_only = TRUE, but `orders` contains no integer order.",
+               call. = FALSE)
+        }
+      }
+      self$orders <- orders
     },
 
     #' @description Record one or more privacy-consuming steps
@@ -538,26 +884,7 @@ dp_accountant_poisson <- R6::R6Class(
     #' @param alpha RDP order (must be > 1)
     #' @return RDP value at order alpha for one step
     compute_rdp = function(alpha) {
-      q <- self$sampling_rate
-      sigma <- self$noise_multiplier
-
-      if (q == 0) return(0)
-
-      # Base Gaussian mechanism RDP
-      base_rdp <- alpha / (2 * sigma^2)
-
-      # Apply subsampling amplification
-      # For small q, use simplified formula: RDP <= q^2 * base_rdp
-      # For larger q, use the full formula from Mironov et al.
-      if (q < 0.01) {
-        return(q^2 * base_rdp)
-      } else {
-        # Full formula for subsampled Gaussian
-        log_term1 <- log(1 - q)
-        log_term2 <- log(q) + (alpha - 1) * base_rdp
-        rdp <- (log(exp(log_term1) + exp(log_term2))) / (alpha - 1)
-        return(max(0, rdp))
-      }
+      rdp_sgm(self$sampling_rate, self$noise_multiplier, alpha)
     },
 
     #' @description Get (epsilon, delta)-DP guarantee
@@ -571,24 +898,23 @@ dp_accountant_poisson <- R6::R6Class(
         return(0)
       }
 
-      # Search over RDP orders to find best epsilon
-      orders <- c(1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 128, 256)
-      best_eps <- Inf
+      orders <- self$orders
 
-      for (alpha in orders) {
-        # Total RDP via composition
-        total_rdp <- self$compute_rdp(alpha) * self$steps
+      # RDP composes by addition across the steps, since the sampling rate and
+      # the noise multiplier are constant throughout training.
+      total_rdp <- vapply(orders, function(a) self$compute_rdp(a), numeric(1)) *
+        self$steps
 
-        # Convert to (epsilon, delta)-DP
-        eps <- total_rdp + log(1 / delta) / (alpha - 1)
+      # Conversion of Canonne, Kamath and Steinke (2020), which is uniformly
+      # tighter than the classical eps = rdp + log(1 / delta) / (alpha - 1).
+      eps <- total_rdp -
+        (log(delta) + log(orders)) / (orders - 1) +
+        log((orders - 1) / orders)
 
-        # Check for valid epsilon (finite and positive)
-        if (is.finite(eps) && eps > 0 && eps < best_eps) {
-          best_eps <- eps
-        }
-      }
+      eps <- eps[is.finite(eps)]
+      if (length(eps) == 0) return(Inf)
 
-      return(best_eps)
+      max(0, min(eps))
     }
   )
 )
@@ -698,6 +1024,41 @@ sample_secure_gaussian_like <- function(tensor, scale) {
 }
 
 
+#' @title Noise-Only DP-SGD Step
+#'
+#' @description Perform the release step of DP-SGD when the Poisson draw
+#'   selected no records: the clipped-gradient sum is zero, so the mechanism
+#'   releases pure noise.
+#'
+#' @param d_net Discriminator network
+#' @param d_optim Discriminator optimizer
+#' @param max_grad_norm Maximum gradient norm for clipping
+#' @param noise_multiplier Gaussian noise multiplier
+#' @param expected_batch_size Divisor, \code{sampling_rate * n_samples}
+#' @param secure_rng Use cryptographically secure RNG
+#'
+#' @return \code{0}, the loss over an empty batch
+#'
+#' @keywords internal
+dp_noise_only_step <- function(d_net, d_optim, max_grad_norm, noise_multiplier,
+                               expected_batch_size, secure_rng = TRUE) {
+  noise_scale <- noise_multiplier * max_grad_norm
+
+  d_optim$zero_grad()
+  for (param in d_net$parameters) {
+    zero_grad <- torch::torch_zeros_like(param)
+    param$grad <- if (secure_rng) {
+      sample_secure_gaussian_like(zero_grad, noise_scale / expected_batch_size)
+    } else {
+      torch::torch_randn_like(zero_grad) * (noise_scale / expected_batch_size)
+    }
+  }
+  d_optim$step()
+
+  0
+}
+
+
 #' @title DP-SGD Discriminator Update Step
 #'
 #' @description Perform one DP-SGD update step for the discriminator with
@@ -717,6 +1078,24 @@ sample_secure_gaussian_like <- function(tensor, scale) {
 #' @param secure_rng Use cryptographically secure RNG (slower but secure)
 #'
 #' @return Scalar loss value
+#'
+#' @details
+#' The quantity released to the optimizer is the Poisson-subsampled sum of
+#' per-sample gradients, each clipped to L2 norm \code{max_grad_norm}, perturbed
+#' by Gaussian noise of scale \code{noise_multiplier * max_grad_norm}, and then
+#' divided by the \emph{expected} batch size \code{sampling_rate * n_samples}.
+#'
+#' The divisor must not depend on the realised batch size. The privacy analysis
+#' -- and the accountant in \code{rdp_sgm()} -- covers the noisy \emph{sum}
+#' only; dividing by a constant is post-processing and so is free, but dividing
+#' by \code{length(batch_indices)} would make both the location and the scale of
+#' the released quantity depend on how many records the Poisson draw selected.
+#' That count is itself data-dependent under add/remove-one adjacency, and its
+#' contribution to the privacy loss is not accounted for by the Sampled Gaussian
+#' Mechanism bound.
+#'
+#' For the same reason an empty Poisson draw is not a free step: the mechanism
+#' still releases noise, and the accountant still charges for it.
 #'
 #' @keywords internal
 dp_discriminator_step <- function(
@@ -740,14 +1119,28 @@ dp_discriminator_step <- function(
     batch_indices <- fast_poisson_subsample(n_samples, sampling_rate)
   }
 
-  # Handle empty batch
-  if (length(batch_indices) == 0) {
-    return(0)
+  actual_batch_size <- length(batch_indices)
+
+  # The divisor is the expected batch size, which is a constant fixed by the
+  # sampling rate and the dataset size. See the details section: using the
+  # realised batch size here would leak it.
+  expected_batch_size <- sampling_rate * n_samples
+  if (!is.finite(expected_batch_size) || expected_batch_size <= 0) {
+    stop("sampling_rate * n_samples must be positive; got ",
+         expected_batch_size, ". A zero sampling rate releases nothing and ",
+         "leaves the normalisation undefined.", call. = FALSE)
+  }
+
+  # An empty Poisson draw still releases noise. Returning early instead would
+  # make "no optimizer step" an observable event whose probability, (1 - q)^n,
+  # depends on the number of records.
+  if (actual_batch_size == 0) {
+    return(dp_noise_only_step(d_net, d_optim, max_grad_norm, noise_multiplier,
+                              expected_batch_size, secure_rng))
   }
 
   # Get the batch
   real_data <- data[batch_indices]$to(device = device)
-  actual_batch_size <- length(batch_indices)
 
   # Generate fake data
   z <- sample_noise(c(actual_batch_size, noise_dim))$to(device = device)
@@ -811,14 +1204,14 @@ dp_discriminator_step <- function(
   param_idx <- 1
   for (param in d_net$parameters) {
     if (!is.null(accumulated_grads[[param_idx]])) {
-      # Average the clipped gradients
-      avg_grad <- accumulated_grads[[param_idx]] / actual_batch_size
+      # Normalise by the expected batch size, not the realised one.
+      avg_grad <- accumulated_grads[[param_idx]] / expected_batch_size
 
       # Add Gaussian noise (secure or fast)
       if (secure_rng) {
-        noise <- sample_secure_gaussian_like(avg_grad, noise_scale / actual_batch_size)
+        noise <- sample_secure_gaussian_like(avg_grad, noise_scale / expected_batch_size)
       } else {
-        noise <- torch::torch_randn_like(avg_grad) * (noise_scale / actual_batch_size)
+        noise <- torch::torch_randn_like(avg_grad) * (noise_scale / expected_batch_size)
       }
 
       # Set noisy gradient
@@ -906,42 +1299,50 @@ calibrate_noise_multiplier <- function(
     max_noise = 100,
     tolerance = 0.01
 ) {
-  # Binary search for the noise multiplier
-  low <- min_noise
-  high <- max_noise
-
-  for (iter in 1:100) {
-    mid <- (low + high) / 2
-
-    # Create accountant with this noise multiplier
+  eps_at <- function(sigma) {
     accountant <- dp_accountant_poisson$new(
       sampling_rate = sampling_rate,
-      noise_multiplier = mid,
+      noise_multiplier = sigma,
       target_delta = target_delta
     )
     accountant$step(total_steps)
+    accountant$get_epsilon()
+  }
 
-    eps <- accountant$get_epsilon()
+  # Epsilon is decreasing in the noise multiplier, so the search is only
+  # well posed if the largest multiplier considered is already inside budget.
+  eps_max <- eps_at(max_noise)
+  if (eps_max > target_epsilon) {
+    stop("Cannot reach target_epsilon = ", format(target_epsilon),
+         " with noise_multiplier <= ", format(max_noise), " over ",
+         total_steps, " steps (epsilon = ", format(eps_max), "). Increase ",
+         "max_noise, reduce total_steps, or raise target_epsilon.",
+         call. = FALSE)
+  }
+  if (eps_at(min_noise) <= target_epsilon) return(min_noise)
 
-    if (abs(eps - target_epsilon) < tolerance) {
-      return(mid)
-    }
+  # Invariant: eps_at(low) > target_epsilon >= eps_at(high). The search only
+  # ever returns `high`, so the multiplier handed back is always inside the
+  # budget. Returning the midpoint, as earlier versions did, could overshoot
+  # the target by up to `tolerance` - the wrong direction for a privacy
+  # parameter.
+  low <- min_noise
+  high <- max_noise
+  eps_high <- eps_max
 
-    if (eps > target_epsilon) {
-      # Need more noise (larger multiplier)
-      low <- mid
-    } else {
-      # Can use less noise (smaller multiplier)
+  for (iter in 1:100) {
+    if (target_epsilon - eps_high < tolerance || high - low < 1e-6) break
+    mid <- (low + high) / 2
+    eps_mid <- eps_at(mid)
+    if (eps_mid <= target_epsilon) {
       high <- mid
-    }
-
-    # Check convergence
-    if (high - low < 0.001) {
-      break
+      eps_high <- eps_mid
+    } else {
+      low <- mid
     }
   }
 
-  return(mid)
+  high
 }
 
 

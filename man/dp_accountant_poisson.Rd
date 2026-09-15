@@ -11,6 +11,22 @@ with Poisson subsampling amplification.
 Implements the privacy accounting from Mironov (2017) with subsampling
 amplification. RDP provides tighter composition than basic composition
 and converts to (epsilon, delta)-DP guarantees.
+
+Every step of the accounting has a machine-checked counterpart in the
+accompanying Lean 4 formalization:
+\itemize{
+\item the per-step bound is \code{renyiDiv_sgmMechanism_le}; see
+\code{rdp_sgm()} for the setting it assumes;
+\item that RDP adds over the steps of an adaptively chosen sequence is
+\code{renyiDivFin_transcript_le};
+\item the conversion to \code{(epsilon, delta)}-DP is
+\code{approxDP_transcript_cks}, which yields exactly the expression
+\code{get_epsilon()} minimises;
+\item \code{cksEps_le_classicalEps} proves that expression is never worse
+than the classical \code{rdp + log(1 / delta) / (alpha - 1)}.
+}
+Minimising over a grid of orders is sound because each order gives a valid
+guarantee on its own.
 }
 \keyword{internal}
 \section{Public fields}{
@@ -23,6 +39,11 @@ and converts to (epsilon, delta)-DP guarantees.
 \item{\code{noise_multiplier}}{Gaussian noise multiplier}
 
 \item{\code{target_delta}}{Target delta for conversion}
+
+\item{\code{orders}}{RDP orders searched when converting to (eps, delta)-DP}
+
+\item{\code{certified_only}}{Restrict the search to integer orders, where the
+per-step bound is machine-checked}
 }
 \if{html}{\out{</div>}}
 }
@@ -45,7 +66,9 @@ Create a new privacy accountant
 \if{html}{\out{<div class="r">}}\preformatted{dp_accountant_poisson$new(
   sampling_rate,
   noise_multiplier,
-  target_delta = 1e-05
+  target_delta = 1e-05,
+  orders = c(seq(1.1, 10.9, by = 0.1), 11:64, seq(66, 256, by = 2)),
+  certified_only = FALSE
 )}\if{html}{\out{</div>}}
 }
 
@@ -57,6 +80,17 @@ Create a new privacy accountant
 \item{\code{noise_multiplier}}{Noise scale relative to sensitivity}
 
 \item{\code{target_delta}}{Target delta for DP guarantee}
+
+\item{\code{orders}}{RDP orders to search. The default grid is fine between 1
+and 11, where the optimum usually sits and where integer orders are far
+apart in relative terms, and coarsens above that.}
+
+\item{\code{certified_only}}{Keep only the integer orders in \code{orders}. At
+those the per-step bound is the conclusion of a Lean proof; at
+fractional orders it is an uncertified series, checked at run time
+against the integer orders bracketing it. Restricting to integers
+raises the reported epsilon -- by up to 11 percent when the optimal
+order is small -- so it trades tightness for a fully checked number.}
 }
 \if{html}{\out{</div>}}
 }

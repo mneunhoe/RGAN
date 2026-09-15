@@ -9,7 +9,8 @@ compute_discriminator_scores(
   generated_samples,
   real_data,
   batch_size = 1000,
-  device = NULL
+  device = NULL,
+  score_transform = c("none", "sigmoid")
 )
 }
 \arguments{
@@ -22,12 +23,21 @@ compute_discriminator_scores(
 \item{batch_size}{Batch size for scoring (to manage memory). Defaults to 1000.}
 
 \item{device}{Device for computation ("cpu", "cuda", "mps"). Defaults to trained_gan's device.}
+
+\item{score_transform}{Either "none" (default) to return the discriminator
+outputs as they are, or "sigmoid" to squash them into \verb{[0, 1]}. The squash is
+monotone, so it preserves the ranking of samples, and it is what makes the
+scores of an unbounded critic (WGAN, KLWGAN) usable with \code{dp = TRUE}.}
 }
 \value{
 A list with:
 \itemize{
 \item d_score_fake: Matrix of discriminator scores (N_discriminators x N_samples)
 \item d_score_real: Vector of mean discriminator scores on real data (length N_discriminators)
+\item n_real_units: Number of independently scored units averaged into each
+entry of d_score_real. Equals the number of real records unless
+\code{pac > 1}, in which case it is \code{n / pac}. Pass this as \code{real_N} to
+\code{post_gan_boosting()}.
 \item epochs: Vector of epoch numbers corresponding to each discriminator
 }
 }

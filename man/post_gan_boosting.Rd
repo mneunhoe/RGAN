@@ -26,19 +26,29 @@ Each row contains scores from one discriminator checkpoint for all candidate sam
 
 \item{B}{Matrix of candidate synthetic samples (N_samples x data_dim).}
 
-\item{real_N}{Number of real training samples (used for privacy calibration).}
+\item{real_N}{Number of \emph{independently scored} records behind \code{d_score_real}.
+The exponential mechanism is calibrated to a sensitivity of \code{1 / real_N}, so
+this must be the number of scores that were averaged, not the number of rows
+in the training data. With PacGAN packing (\code{pac > 1}) each score covers \code{pac}
+records and the correct value is \code{n / pac}; \code{compute_discriminator_scores()}
+reports it as \code{n_real_units}.}
 
 \item{steps}{Number of boosting iterations. Defaults to 400.}
 
-\item{N_generators}{Number of discriminator checkpoints used. Defaults to 200.}
+\item{N_generators}{Number of discriminator checkpoints used. Must equal
+\code{nrow(d_score_fake)}. Defaults to 200.}
 
 \item{uniform_init}{Initialize phi with uniform distribution. Defaults to TRUE.}
 
-\item{dp}{Use differential privacy for discriminator selection via exponential mechanism.
-Defaults to FALSE.}
+\item{dp}{Use differential privacy for discriminator selection via exponential
+mechanism. Defaults to FALSE. Requires all discriminator scores to lie in
+\verb{[0, 1]}; unbounded critics (WGAN, KLWGAN) are rejected with an error, since
+the \code{1 / real_N} sensitivity the mechanism is calibrated to does not hold for
+them. Re-score with \code{score_transform = "sigmoid"} to use them.}
 
-\item{MW_epsilon}{Total privacy budget for multiplicative weights (only if dp=TRUE).
-Defaults to 0.1.}
+\item{MW_epsilon}{Total privacy budget for multiplicative weights (only if
+dp=TRUE). Split as \code{MW_epsilon / steps} per round, so basic composition over
+the \code{steps} rounds spends \code{MW_epsilon} in total. Defaults to 0.1.}
 
 \item{weighted_average}{Use weighted averaging (weights proportional to sqrt(step)).
 Defaults to FALSE.}
@@ -50,6 +60,9 @@ A list with:
 \itemize{
 \item PGB_sample: Matrix of selected high-quality samples
 \item d_score_PGB: Discriminator scores for selected samples
+\item D_bar: The mixed discriminator strategy, i.e. the fraction of the
+\code{steps} rounds in which each discriminator was selected (length
+\code{N_generators}).
 }
 }
 \description{

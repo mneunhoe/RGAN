@@ -14,6 +14,7 @@ apply_post_gan_boosting(
   MW_epsilon = 0.1,
   weighted_average = FALSE,
   averaging_window = NULL,
+  score_transform = c("none", "sigmoid"),
   device = NULL,
   seed = NULL
 )
@@ -29,13 +30,23 @@ apply_post_gan_boosting(
 
 \item{steps}{Number of boosting steps. Defaults to 400.}
 
-\item{dp}{Use differential privacy for discriminator selection. Defaults to FALSE.}
+\item{dp}{Use differential privacy for discriminator selection. Defaults to
+FALSE. This privatises the \emph{selection} of discriminators only: if
+\code{trained_gan} came from \code{gan_trainer()} rather than \code{dp_gan_trainer()}, the
+checkpoints already encode the training data and the boosted samples are not
+differentially private end to end. Total budget is the training epsilon plus
+\code{MW_epsilon}.}
 
 \item{MW_epsilon}{Privacy budget for multiplicative weights (only used if dp=TRUE). Defaults to 0.1.}
 
 \item{weighted_average}{Use weighted averaging for final distribution. Defaults to FALSE.}
 
 \item{averaging_window}{Window size for averaging phi distributions. Defaults to NULL (use all steps).}
+
+\item{score_transform}{Either "none" (default) or "sigmoid"; see
+\code{compute_discriminator_scores()}. Use "sigmoid" with \code{dp = TRUE} when the GAN
+was trained with a value function other than "original", whose discriminator
+has no sigmoid output layer.}
 
 \item{device}{Device for computation. Defaults to trained_gan's device.}
 

@@ -73,14 +73,24 @@ rejection_sample <-
 #'   Each row contains scores from one discriminator checkpoint for all candidate samples.
 #' @param d_score_real Vector of mean discriminator scores on real data (length N_discriminators).
 #' @param B Matrix of candidate synthetic samples (N_samples x data_dim).
-#' @param real_N Number of real training samples (used for privacy calibration).
+#' @param real_N Number of *independently scored* records behind `d_score_real`.
+#'   The exponential mechanism is calibrated to a sensitivity of `1 / real_N`, so
+#'   this must be the number of scores that were averaged, not the number of rows
+#'   in the training data. With PacGAN packing (`pac > 1`) each score covers `pac`
+#'   records and the correct value is `n / pac`; `compute_discriminator_scores()`
+#'   reports it as `n_real_units`.
 #' @param steps Number of boosting iterations. Defaults to 400.
-#' @param N_generators Number of discriminator checkpoints used. Defaults to 200.
+#' @param N_generators Number of discriminator checkpoints used. Must equal
+#'   `nrow(d_score_fake)`. Defaults to 200.
 #' @param uniform_init Initialize phi with uniform distribution. Defaults to TRUE.
-#' @param dp Use differential privacy for discriminator selection via exponential mechanism.
-#'   Defaults to FALSE.
-#' @param MW_epsilon Total privacy budget for multiplicative weights (only if dp=TRUE).
-#'   Defaults to 0.1.
+#' @param dp Use differential privacy for discriminator selection via exponential
+#'   mechanism. Defaults to FALSE. Requires all discriminator scores to lie in
+#'   `[0, 1]`; unbounded critics (WGAN, KLWGAN) are rejected with an error, since
+#'   the `1 / real_N` sensitivity the mechanism is calibrated to does not hold for
+#'   them. Re-score with `score_transform = "sigmoid"` to use them.
+#' @param MW_epsilon Total privacy budget for multiplicative weights (only if
+#'   dp=TRUE). Split as `MW_epsilon / steps` per round, so basic composition over
+#'   the `steps` rounds spends `MW_epsilon` in total. Defaults to 0.1.
 #' @param weighted_average Use weighted averaging (weights proportional to sqrt(step)).
 #'   Defaults to FALSE.
 #' @param averaging_window Number of final steps to average over. Defaults to NULL (all steps).
@@ -89,6 +99,9 @@ rejection_sample <-
 #'   \itemize{
 #'     \item PGB_sample: Matrix of selected high-quality samples
 #'     \item d_score_PGB: Discriminator scores for selected samples
+#'     \item D_bar: The mixed discriminator strategy, i.e. the fraction of the
+#'       `steps` rounds in which each discriminator was selected (length
+#'       `N_generators`).
 #'   }
 #'
 #' @references
@@ -122,6 +135,50 @@ post_gan_boosting <-
            weighted_average = FALSE,
            averaging_window = NULL) {
 
+    # ---- Input validation -------------------------------------------------
+
+    d_score_fake <- as.matrix(d_score_fake)
+    d_score_real <- as.vector(d_score_real)
+    n_disc <- nrow(d_score_fake)
+
+    if (length(d_score_real) != n_disc) {
+      stop("d_score_real must hold one score per discriminator: ",
+           length(d_score_real), " scores for ", n_disc,
+           " rows of d_score_fake.", call. = FALSE)
+    }
+    if (ncol(d_score_fake) != nrow(B)) {
+      stop("d_score_fake must hold one column per candidate sample: ",
+           ncol(d_score_fake), " columns for ", nrow(B), " rows of B.",
+           call. = FALSE)
+    }
+    if (N_generators != n_disc) {
+      # A mismatch silently recycles best_D into best_D_matrix when one count
+      # divides the other, corrupting the averaged discriminator D-bar.
+      stop("N_generators (", N_generators, ") must equal the number of ",
+           "discriminators, nrow(d_score_fake) (", n_disc, ").", call. = FALSE)
+    }
+
+    if (isTRUE(dp)) {
+      # The exponential mechanism below is calibrated to a sensitivity of
+      # 1 / real_N, which holds only while the discriminator scores lie in
+      # [0, 1]. Unbounded critics (WGAN, KLWGAN) break that calibration.
+      rng <- range(c(d_score_fake, d_score_real), na.rm = TRUE)
+      if (!all(is.finite(rng)) || rng[1] < -1e-6 || rng[2] > 1 + 1e-6) {
+        stop("dp = TRUE requires discriminator scores in [0, 1]; observed ",
+             "range [", format(rng[1]), ", ", format(rng[2]), "]. Non-sigmoid ",
+             "critics (WGAN, KLWGAN) are unbounded, so the 1 / real_N ",
+             "sensitivity the exponential mechanism is calibrated to does not ",
+             "hold. Re-score with score_transform = \"sigmoid\", or set ",
+             "dp = FALSE.", call. = FALSE)
+      }
+      if (!is.numeric(real_N) || length(real_N) != 1L ||
+          !is.finite(real_N) || real_N < 1) {
+        stop("dp = TRUE requires real_N to be the number of independently ",
+             "scored records backing d_score_real (a positive number).",
+             call. = FALSE)
+      }
+    }
+
     # Initialize phi (the distribution over the generated examples B).
     # Either with a uniform distribution (as in the paper).
     # Or with a random distribution.
@@ -136,7 +193,8 @@ post_gan_boosting <-
       phi <- phi_unnormalized / sum(phi_unnormalized)
     }
 
-    # Set epsilon0 the privacy parameter for each update step
+    # Per-round privacy parameter. Basic composition over the `steps` rounds
+    # spends steps * epsilon0 = MW_epsilon in total.
     epsilon0 <- MW_epsilon / steps
 
     # Initialize matrices to hold the results to calculate the mixture distribution.
@@ -151,40 +209,43 @@ post_gan_boosting <-
       # Set learning rate (eta in the paper)
       learning_rate <- 1 / sqrt(step_i)
 
-      # Calculate the payoff U
-      U_fake <- d_score_fake %*% phi
-      # U as defined in Part 3.1
-      U <- -(((1 - d_score_real) + U_fake))
+      # Payoff of each discriminator against the current phi, as in Section 3.1
+      # of the paper:  U(phi, D_j) = E_real[D_j] + (1 - E_phi[D_j]).
+      U_fake <- as.vector(d_score_fake %*% phi)
+      U <- d_score_real + (1 - U_fake)
 
       # Selecting a discriminator using the payoff U as the quality score
 
-      if (dp == T) {
-        # With dp the exponential mechanism is applied to choose D
-        # The best D is sampled with probability porportional to
-        # exp(epsilon0 * U * nrow(X))/2
-        # add a small constant for numerical stability
-        exp_U <- exp((epsilon0 * U * real_N) / (2)) + exp(-500)
+      if (isTRUE(dp)) {
+        # Exponential mechanism over discriminator INDICES.
+        #
+        # Sampling a score *value* and mapping it back with which(U == v)[1]
+        # gives every tied discriminator after the first a selection
+        # probability of zero. When a tie is present on one dataset and broken
+        # on an adjacent one, the ratio of output probabilities is unbounded
+        # and the eps-DP guarantee fails. Sampling the index directly is what
+        # the exponential mechanism is.
+        #
+        # The log-sum-exp shift keeps the weights finite: without it the
+        # exponent epsilon0 * real_N * U / 2 under- or overflows for large
+        # real_N and p_U silently collapses to the uniform distribution.
+        log_w <- (epsilon0 * real_N / 2) * U
+        p_U <- exp(log_w - max(log_w))
+        p_U <- p_U / sum(p_U)
 
-        sum_exp_U <- sum(exp_U)
+        if (!all(is.finite(p_U)) || abs(sum(p_U) - 1) > 1e-8) {
+          stop("Exponential mechanism weights are not a valid distribution. ",
+               "Check d_score_fake and d_score_real for NA or non-finite ",
+               "values.", call. = FALSE)
+        }
 
-        # Normalize to get valid probability distribution
-        p_U <- exp_U / sum_exp_U
-
-        # Sample the best discriminator. If multiple Discriminators have the same score,
-        # pick the first one.
-        best_D <-
-          1:length(U) == which(U == sample(
-            x = U,
-            size = 1,
-            prob = p_U
-          ))[1]
-
-
+        best_idx <- sample.int(n_disc, size = 1L, prob = p_U)
+      } else {
+        # Without privacy, play an exact best response.
+        best_idx <- which.max(U)
       }
-      if (dp == F) {
-        # Without privacy, directly pick the Discriminator with the best quality score.
-        best_D <- 1:length(U) == which.max(U)
-      }
+
+      best_D <- seq_len(n_disc) == best_idx
 
       # Store the results
 
@@ -233,8 +294,11 @@ post_gan_boosting <-
 
     d_score_PGB <- d_bar_fake[PGB_sel]
 
-    # Collect results in a list
-    res <- list(PGB_sample = PGB_sample, d_score_PGB = d_score_PGB)
+    # Collect results in a list. D_bar is the paper's mixed discriminator
+    # strategy: the fraction of rounds in which each discriminator was selected.
+    res <- list(PGB_sample = PGB_sample,
+                d_score_PGB = d_score_PGB,
+                D_bar = mix_D)
 
     # Return results
     return(res)
@@ -251,11 +315,19 @@ post_gan_boosting <-
 #' @param real_data A matrix of real data for computing real scores
 #' @param batch_size Batch size for scoring (to manage memory). Defaults to 1000.
 #' @param device Device for computation ("cpu", "cuda", "mps"). Defaults to trained_gan's device.
+#' @param score_transform Either "none" (default) to return the discriminator
+#'   outputs as they are, or "sigmoid" to squash them into `[0, 1]`. The squash is
+#'   monotone, so it preserves the ranking of samples, and it is what makes the
+#'   scores of an unbounded critic (WGAN, KLWGAN) usable with `dp = TRUE`.
 #'
 #' @return A list with:
 #'   \itemize{
 #'     \item d_score_fake: Matrix of discriminator scores (N_discriminators x N_samples)
 #'     \item d_score_real: Vector of mean discriminator scores on real data (length N_discriminators)
+#'     \item n_real_units: Number of independently scored units averaged into each
+#'       entry of d_score_real. Equals the number of real records unless
+#'       `pac > 1`, in which case it is `n / pac`. Pass this as `real_N` to
+#'       `post_gan_boosting()`.
 #'     \item epochs: Vector of epoch numbers corresponding to each discriminator
 #'   }
 #' @export
@@ -263,7 +335,15 @@ compute_discriminator_scores <- function(trained_gan,
                                           generated_samples,
                                           real_data,
                                           batch_size = 1000,
-                                          device = NULL) {
+                                          device = NULL,
+                                          score_transform = c("none", "sigmoid")) {
+
+  score_transform <- match.arg(score_transform)
+  # A monotone squash into [0, 1] makes unbounded critic outputs usable by the
+  # differentially private selection, whose sensitivity analysis needs bounded
+  # scores. It has to be asked for: silently changing the score scale would
+  # change what the returned numbers mean.
+  squash <- if (score_transform == "sigmoid") logistic else identity
 
   if (!inherits(trained_gan, "trained_RGAN")) {
     stop("trained_gan must be an object of class 'trained_RGAN'")
@@ -292,6 +372,9 @@ compute_discriminator_scores <- function(trained_gan,
   # Initialize score matrices
   d_score_fake <- matrix(NA, nrow = n_discriminators, ncol = n_samples)
   d_score_real <- numeric(n_discriminators)
+  # Number of independently scored units behind each entry of d_score_real.
+  # With PacGAN each score covers `pac` records, so this is n / pac, not n.
+  n_real_units <- NA_integer_
 
   # Create a discriminator template with same architecture
   value_function <- trained_gan$settings$value_function
@@ -339,7 +422,7 @@ compute_discriminator_scores <- function(trained_gan,
       scores <- torch::with_no_grad({
         torch::as_array(d_template(batch)$cpu())
       })
-      fake_scores <- c(fake_scores, as.vector(scores))
+      fake_scores <- c(fake_scores, squash(as.vector(scores)))
     }
 
     # For unpacked samples when pac > 1, we need to expand scores
@@ -369,10 +452,11 @@ compute_discriminator_scores <- function(trained_gan,
       scores <- torch::with_no_grad({
         torch::as_array(d_template(batch)$cpu())
       })
-      real_scores <- c(real_scores, as.vector(scores))
+      real_scores <- c(real_scores, squash(as.vector(scores)))
     }
 
     d_score_real[i] <- mean(real_scores)
+    if (i == 1L) n_real_units <- length(real_scores)
 
     cli::cli_progress_update()
   }
@@ -380,6 +464,7 @@ compute_discriminator_scores <- function(trained_gan,
   return(list(
     d_score_fake = d_score_fake,
     d_score_real = d_score_real,
+    n_real_units = n_real_units,
     epochs = trained_gan$checkpoints$epochs
   ))
 }
@@ -397,10 +482,19 @@ compute_discriminator_scores <- function(trained_gan,
 #' @param transformer Optional data_transformer for inverse transformation
 #' @param n_candidates Number of candidate samples to generate per generator. Defaults to 1000.
 #' @param steps Number of boosting steps. Defaults to 400.
-#' @param dp Use differential privacy for discriminator selection. Defaults to FALSE.
+#' @param dp Use differential privacy for discriminator selection. Defaults to
+#'   FALSE. This privatises the *selection* of discriminators only: if
+#'   `trained_gan` came from `gan_trainer()` rather than `dp_gan_trainer()`, the
+#'   checkpoints already encode the training data and the boosted samples are not
+#'   differentially private end to end. Total budget is the training epsilon plus
+#'   `MW_epsilon`.
 #' @param MW_epsilon Privacy budget for multiplicative weights (only used if dp=TRUE). Defaults to 0.1.
 #' @param weighted_average Use weighted averaging for final distribution. Defaults to FALSE.
 #' @param averaging_window Window size for averaging phi distributions. Defaults to NULL (use all steps).
+#' @param score_transform Either "none" (default) or "sigmoid"; see
+#'   `compute_discriminator_scores()`. Use "sigmoid" with `dp = TRUE` when the GAN
+#'   was trained with a value function other than "original", whose discriminator
+#'   has no sigmoid output layer.
 #' @param device Device for computation. Defaults to trained_gan's device.
 #' @param seed Optional seed for reproducibility.
 #'
@@ -441,8 +535,11 @@ apply_post_gan_boosting <- function(trained_gan,
                                      MW_epsilon = 0.1,
                                      weighted_average = FALSE,
                                      averaging_window = NULL,
+                                     score_transform = c("none", "sigmoid"),
                                      device = NULL,
                                      seed = NULL) {
+
+  score_transform <- match.arg(score_transform)
 
   if (!inherits(trained_gan, "trained_RGAN")) {
     stop("trained_gan must be an object of class 'trained_RGAN'")
@@ -450,6 +547,17 @@ apply_post_gan_boosting <- function(trained_gan,
 
   if (is.null(trained_gan$checkpoints) || length(trained_gan$checkpoints$epochs) == 0) {
     stop("trained_gan does not contain any checkpoints. Train with checkpoint_epochs parameter.")
+  }
+
+  # dp = TRUE privatises the *selection* of discriminators only. Checkpoints
+  # from non-private training already encode the data, so the boosted samples
+  # are not differentially private end to end.
+  if (isTRUE(dp) && is.null(trained_gan$privacy)) {
+    cli::cli_alert_warning(paste0(
+      "dp = TRUE privatises discriminator selection only. These checkpoints ",
+      "carry no privacy record, so the boosted samples are NOT differentially ",
+      "private end to end. Train the GAN with dp_gan_trainer()."
+    ))
   }
 
   # Set seed if provided
@@ -469,8 +577,6 @@ apply_post_gan_boosting <- function(trained_gan,
   } else {
     real_data_tensor <- real_data$to(device = device)
   }
-  real_N <- nrow(real_data_tensor)
-
   n_generators <- length(trained_gan$checkpoints$generators)
   noise_dim <- trained_gan$settings$noise_dim
   sample_noise <- trained_gan$settings$sample_noise
@@ -528,8 +634,21 @@ apply_post_gan_boosting <- function(trained_gan,
     trained_gan = trained_gan,
     generated_samples = B,
     real_data = real_data,
-    device = device
+    device = device,
+    score_transform = score_transform
   )
+
+  # Sensitivity of d_score_real is 1 / (number of independently scored units).
+  # With PacGAN each score covers `pac` records, so that count is n / pac and
+  # using nrow(real_data) would understate the privacy loss by a factor of pac.
+  real_N <- scores$n_real_units
+  if (isTRUE(dp) && real_N != nrow(real_data_tensor)) {
+    cli::cli_alert_info(paste0(
+      "Sensitivity calibrated to ", real_N, " independently scored units ",
+      "(pac = ", trained_gan$settings$pac, ", ",
+      nrow(real_data_tensor), " records)."
+    ))
+  }
 
   cli::cli_alert_info(sprintf("Running post-GAN boosting with %d steps", steps))
 
@@ -540,7 +659,7 @@ apply_post_gan_boosting <- function(trained_gan,
     B = B,
     real_N = real_N,
     steps = steps,
-    N_generators = n_generators,
+    N_generators = nrow(scores$d_score_fake),
     uniform_init = TRUE,
     dp = dp,
     MW_epsilon = MW_epsilon,

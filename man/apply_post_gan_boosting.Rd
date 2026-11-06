@@ -76,13 +76,17 @@ High-level wrapper that orchestrates the full post-GAN boosting workflow:
 }
 }
 \details{
-With \code{dp = TRUE} the exponential mechanism is calibrated to a sensitivity of
-\code{1 / n_real_units} for the mean real-data score. With \code{pac = 1} (and so for
-every \code{dp_gan_trainer()} model) each record is scored on its own and this
-holds under add/remove-one adjacency, matching DP-SGD training. With
-\code{pac > 1} consecutive records are packed together, and inserting or deleting
-a record shifts every later pack; the bound then holds only under
-replace-one adjacency.
+With \code{dp = TRUE} each real record is scored on its own (\code{pac = 1}), so the
+real-data payoff has sensitivity \code{1 / N} under add/remove-one adjacency,
+matching DP-SGD training. For a \code{dp_gan_trainer()} model trained with an
+explicit \code{sampling_rate}, N is the public count
+\code{expected_batch_size / sampling_rate} and the payoff is
+\verb{min(1, sum of scores / N)}, so the number of records stays protected.
+Otherwise N is the number of records, which is then treated as public.
+
+\code{dp = TRUE} is refused for \code{pac > 1}: consecutive records are packed
+together, inserting or deleting one shifts every later pack, and the bound
+would hold only under replace-one adjacency.
 }
 \examples{
 \dontrun{

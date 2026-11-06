@@ -280,7 +280,11 @@ data_transformer <- R6::R6Class(
     #'   Recommended for columns with multi-modal or skewed distributions.
     #'   Defaults to FALSE (standard z-score normalization).
     #' @param n_modes Integer. Maximum number of Gaussian components for GMM fitting.
-    #'   The actual number may be lower if modes with weight < 0.01 are pruned.
+    #'   The actual number may be lower: modes backed by fewer than
+    #'   `max(10, 0.01 * n)` records are pruned, and spreads are floored at 1\%
+    #'   of the column's standard deviation, so that no mode reproduces a single
+    #'   record. This limits memorisation but is not a privacy guarantee; see
+    #'   `fit_public()`.
     #'   Only used when `mode_specific = TRUE`. Defaults to 10.
     #'
     #' @return The transformer object (invisibly), allowing method chaining.
@@ -299,6 +303,8 @@ data_transformer <- R6::R6Class(
     #' transformer$fit(mixed, discrete_columns = c("category"))
     #' transformer$fit(mixed, discrete_columns = 2)
     fit = function(data, discrete_columns = NULL, mode_specific = FALSE, n_modes = 10) {
+      # Fitted on the data: its statistics are not differentially private.
+      self$public <- FALSE
       self$output_info <- list()
       self$output_dimensions <- 0
       self$mode_specific <- mode_specific
@@ -354,6 +360,81 @@ data_transformer <- R6::R6Class(
       invisible(self)
     },
 
+    #' @description
+    #' Fit the transformer from public information only, without looking at
+    #' any data.
+    #'
+    #' A transformer fitted with `fit()` stores statistics of the data it was
+    #' fitted on (means, standard deviations, category levels, mixture
+    #' components). Because the same transformer is needed to decode synthetic
+    #' samples, those statistics are released with a model, outside any
+    #' differential-privacy guarantee. `fit_public()` builds the transformer
+    #' from a schema of public bounds and category domains instead, so it
+    #' spends no privacy budget and reveals nothing about the records.
+    #'
+    #' Continuous columns are clipped to their bounds and scaled linearly into
+    #' `[-1, 1]`; the inverse transform clips back to the bounds. Categorical
+    #' columns are one-hot encoded over the given levels. Mode-specific
+    #' normalisation is not available, since it needs a mixture fitted to data.
+    #'
+    #' @param columns A named list, in the order of the data's columns, whose
+    #'   elements are built with [public_continuous()] or [public_categorical()].
+    #'   The names must match the data's column names.
+    #'
+    #' @return The transformer object (invisibly).
+    #'
+    #' @examples
+    #' transformer <- data_transformer$new()
+    #' transformer$fit_public(list(
+    #'   age = public_continuous(18, 100),
+    #'   sex = public_categorical(c("F", "M"))
+    #' ))
+    #' transformer$transform(data.frame(age = c(30, 120), sex = c("M", "F")))
+    fit_public = function(columns) {
+      if (!is.list(columns) || length(columns) == 0 ||
+          is.null(names(columns)) || any(names(columns) == "")) {
+        stop("columns must be a non-empty named list of public_continuous() ",
+             "or public_categorical() specifications.", call. = FALSE)
+      }
+      self$public <- TRUE
+      self$mode_specific <- FALSE
+      self$n_modes <- NULL
+      self$output_info <- list()
+      self$output_dimensions <- 0
+      self$meta <- list()
+
+      for (column in names(columns)) {
+        spec <- columns[[column]]
+        if (inherits(spec, "rgan_public_continuous")) {
+          meta <- list(
+            name = column,
+            mode_specific = FALSE,
+            mean = (spec$lower + spec$upper) / 2,
+            std = (spec$upper - spec$lower) / 2,
+            bounds = c(spec$lower, spec$upper),
+            output_info = list(1, "linear"),
+            output_dimensions = 1
+          )
+        } else if (inherits(spec, "rgan_public_categorical")) {
+          meta <- list(
+            name = column,
+            levs = spec$levels,
+            original_class = spec$class,
+            output_info = list(length(spec$levels), "softmax"),
+            output_dimensions = length(spec$levels)
+          )
+        } else {
+          stop(sprintf(paste0(
+            "Column '%s': use public_continuous() or public_categorical() to ",
+            "describe it."), column), call. = FALSE)
+        }
+        self$output_info[[length(self$output_info) + 1]] <- meta$output_info
+        self$output_dimensions <- self$output_dimensions + meta$output_dimensions
+        self$meta[[length(self$meta) + 1]] <- meta
+      }
+      invisible(self)
+    },
+
     #' @description Transform a continuous column (internal method)
     #' @param column_meta Metadata for this column from fit_continuous
     #' @param data Vector of values to transform
@@ -395,9 +476,14 @@ data_transformer <- R6::R6Class(
 
         return(result)
       } else {
-        # Standard z-transformation
+        # Standard z-transformation (or, for a public schema, a linear map of
+        # the clipped value into [-1, 1])
         mean <- column_meta$mean
         std <- column_meta$std
+
+        if (!is.null(column_meta$bounds)) {
+          data <- pmin(pmax(data, column_meta$bounds[1]), column_meta$bounds[2])
+        }
 
         z <- (data - mean) / std
 
@@ -515,6 +601,10 @@ data_transformer <- R6::R6Class(
 
         column <- u * std + mean
 
+        if (!is.null(meta$bounds)) {
+          column <- pmin(pmax(column, meta$bounds[1]), meta$bounds[2])
+        }
+
         return(column)
       }
     },
@@ -624,6 +714,17 @@ data_transformer <- R6::R6Class(
       n_modes <- min(n_modes, floor(n / 2))
       if (n_modes < 1) n_modes <- 1
 
+      # Hardening against single-record modes. A mode backed by only a handful
+      # of records, with a spread at an absolute floor, reproduces those
+      # records in every synthetic draw from it. Modes must be backed by at
+      # least `min_mode_size` records (effective count), and spreads are
+      # floored relative to the column's scale. This limits memorisation; it
+      # is not a privacy guarantee (use fit_public() for that).
+      min_mode_size <- max(10, 0.01 * n)
+      data_sd <- if (n > 1) stats::sd(data) else 0
+      std_floor <- max(1e-6, 0.01 * data_sd)
+      n_modes <- max(1, min(n_modes, floor(n / min_mode_size)))
+
       # Initialize using k-means
       if (n_modes == 1) {
         means <- mean(data)
@@ -662,52 +763,68 @@ data_transformer <- R6::R6Class(
       }
 
       # Ensure minimum std to avoid numerical issues
-      stds <- pmax(stds, 1e-6)
+      stds <- pmax(stds, std_floor)
 
-      # Run EM algorithm for a few iterations to refine
-      for (iter in 1:20) {
-        # E-step: compute responsibilities
-        resp <- matrix(0, nrow = n, ncol = n_modes)
-        for (k in 1:n_modes) {
-          resp[, k] <- weights[k] * stats::dnorm(data, mean = means[k], sd = stds[k])
+      # EM refinement
+      run_em <- function(means, stds, weights) {
+        k_modes <- length(means)
+        for (iter in 1:20) {
+          # E-step: compute responsibilities
+          resp <- matrix(0, nrow = n, ncol = k_modes)
+          for (k in 1:k_modes) {
+            resp[, k] <- weights[k] * stats::dnorm(data, mean = means[k], sd = stds[k])
+          }
+          resp_sum <- rowSums(resp)
+          resp_sum[resp_sum == 0] <- 1e-10
+          resp <- resp / resp_sum
+
+          # M-step: update parameters
+          Nk <- colSums(resp)
+          Nk[Nk == 0] <- 1e-10
+
+          new_weights <- Nk / n
+          new_means <- colSums(resp * data) / Nk
+
+          new_stds <- numeric(k_modes)
+          for (k in 1:k_modes) {
+            diff_sq <- (data - new_means[k])^2
+            new_stds[k] <- sqrt(sum(resp[, k] * diff_sq) / Nk[k])
+          }
+          new_stds <- pmax(new_stds, std_floor)
+
+          converged <- max(abs(new_means - means)) < 1e-6 &&
+            max(abs(new_stds - stds)) < 1e-6
+          means <- new_means
+          stds <- new_stds
+          weights <- new_weights
+          if (converged) break
         }
-        resp_sum <- rowSums(resp)
-        resp_sum[resp_sum == 0] <- 1e-10
-        resp <- resp / resp_sum
-
-        # M-step: update parameters
-        Nk <- colSums(resp)
-        Nk[Nk == 0] <- 1e-10
-
-        new_weights <- Nk / n
-        new_means <- colSums(resp * data) / Nk
-
-        new_stds <- numeric(n_modes)
-        for (k in 1:n_modes) {
-          diff_sq <- (data - new_means[k])^2
-          new_stds[k] <- sqrt(sum(resp[, k] * diff_sq) / Nk[k])
-        }
-        new_stds <- pmax(new_stds, 1e-6)
-
-        # Check for convergence
-        if (max(abs(new_means - means)) < 1e-6 && max(abs(new_stds - stds)) < 1e-6) {
-          break
-        }
-
-        means <- new_means
-        stds <- new_stds
-        weights <- new_weights
+        list(means = means, stds = stds, weights = weights)
       }
 
-      # Remove modes with very low weight
-      valid_modes <- weights > 0.01
-      if (sum(valid_modes) < n_modes && sum(valid_modes) >= 1) {
-        means <- means[valid_modes]
-        stds <- stds[valid_modes]
-        weights <- weights[valid_modes]
-        weights <- weights / sum(weights)  # Renormalize
-        n_modes <- sum(valid_modes)
+      fit <- run_em(means, stds, weights)
+
+      # Remove modes backed by too few records, then refit so that the
+      # remaining modes absorb their records. If none qualifies, keep the
+      # heaviest mode only.
+      for (pass in 1:2) {
+        valid_modes <- fit$weights * n >= min_mode_size
+        if (!any(valid_modes)) {
+          valid_modes <- seq_along(fit$weights) == which.max(fit$weights)
+        }
+        if (all(valid_modes)) break
+        w <- fit$weights[valid_modes]
+        fit <- run_em(fit$means[valid_modes], fit$stds[valid_modes], w / sum(w))
       }
+      # A final pass can still leave a light mode; drop it without refitting.
+      valid_modes <- fit$weights * n >= min_mode_size
+      if (!any(valid_modes)) {
+        valid_modes <- seq_along(fit$weights) == which.max(fit$weights)
+      }
+      means <- fit$means[valid_modes]
+      stds <- fit$stds[valid_modes]
+      weights <- fit$weights[valid_modes] / sum(fit$weights[valid_modes])
+      n_modes <- length(means)
 
       return(list(
         means = means,
@@ -718,3 +835,54 @@ data_transformer <- R6::R6Class(
     }
   )
 )
+
+
+#' @title Public Specification of a Continuous Column
+#'
+#' @description Describes a continuous column for
+#'   `data_transformer$fit_public()` by public bounds, chosen without looking at
+#'   the data (e.g. from domain knowledge or a codebook). Values outside the
+#'   bounds are clipped.
+#'
+#' @param lower,upper Finite public bounds, `lower < upper`.
+#' @return An object of class `rgan_public_continuous`.
+#' @export
+#' @examples
+#' public_continuous(0, 120)
+public_continuous <- function(lower, upper) {
+  if (!is.numeric(lower) || !is.numeric(upper) || length(lower) != 1 ||
+      length(upper) != 1 || !is.finite(lower) || !is.finite(upper) ||
+      lower >= upper) {
+    stop("public_continuous() needs finite bounds with lower < upper.",
+         call. = FALSE)
+  }
+  structure(list(lower = lower, upper = upper),
+            class = "rgan_public_continuous")
+}
+
+#' @title Public Specification of a Categorical Column
+#'
+#' @description Describes a categorical column for
+#'   `data_transformer$fit_public()` by its public domain of levels.
+#'
+#' @param levels The possible values, as a vector. Levels must be chosen
+#'   without looking at the data; a level that occurs in the data but is not
+#'   listed raises an error at `transform()`.
+#' @param class The class to restore at `inverse_transform()`: one of
+#'   "character" (default), "factor", "ordered", "numeric", "integer" or
+#'   "logical".
+#' @return An object of class `rgan_public_categorical`.
+#' @export
+#' @examples
+#' public_categorical(c("low", "medium", "high"), class = "ordered")
+public_categorical <- function(levels, class = "character") {
+  class <- match.arg(class, c("character", "factor", "ordered", "numeric",
+                              "integer", "logical"))
+  levels <- unique(as.character(levels))
+  if (length(levels) < 1 || anyNA(levels)) {
+    stop("public_categorical() needs at least one non-missing level.",
+         call. = FALSE)
+  }
+  structure(list(levels = levels, class = class),
+            class = "rgan_public_categorical")
+}

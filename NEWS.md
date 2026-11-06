@@ -2,6 +2,38 @@
 
 Fixes for the defects reported in GitHub issues #3-#27.
 
+## The dataset size, the transformer and PacGAN under DP (#6, #7, #9)
+
+* `dp_gan_trainer()` keeps the number of records out of the mechanism when
+  `sampling_rate` is supplied (#6). `batch_size` is now the public expected
+  batch size: the noisy gradient sum is divided by it, and the generator is
+  updated on batches of that size, instead of `sampling_rate * nrow(data)`.
+  The sampling rate, the number of steps and the noise are then fixed without
+  looking at the data, as the add/remove-one analysis requires, and n can no
+  longer be read off the model. Left to its default, `sampling_rate` is still
+  `batch_size / nrow(data)`; a warning now says that n is not protected on
+  that path, and `privacy$n_public` records it. **If you pass a
+  `sampling_rate` whose implied batch size differs from `batch_size`, the
+  effective learning rate changes**; a message reports the factor.
+* For such models, `apply_post_gan_boosting(dp = TRUE)` normalises the
+  real-data scores by the public count `expected_batch_size / sampling_rate`
+  rather than by n. `compute_discriminator_scores()` also returns
+  `d_score_real_sum`.
+* `apply_post_gan_boosting(dp = TRUE)` is refused for `pac > 1`, whose
+  consecutive packing gives the calibrated sensitivity only under replace-one
+  adjacency (#9). Every `dp_gan_trainer()` model has `pac = 1`.
+* New `data_transformer$fit_public()`, with `public_continuous()` and
+  `public_categorical()`, builds a transformer from public bounds and category
+  domains without touching the data, so decoding DP samples releases nothing
+  beyond the model (#7). `sample_synthetic_data()` and
+  `apply_post_gan_boosting()` warn when a DP model is decoded with a
+  transformer fitted by `fit()`.
+* Mode-specific normalisation no longer lets a single record have its own
+  mode: modes need at least `max(10, 0.01 * n)` records, spreads are floored
+  at 1% of the column's standard deviation, and EM is refitted after pruning.
+  Fitted mixtures, and so transformed data, change for small or outlying
+  columns. This limits memorisation but is not a privacy guarantee.
+
 ## Differential privacy
 
 * `dp_gan_trainer()` checks the budget *before* each DP step and refuses to

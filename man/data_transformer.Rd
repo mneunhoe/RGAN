@@ -211,6 +211,17 @@ transformer$fit(mixed, discrete_columns = c("category"))
 transformer$fit(mixed, discrete_columns = 2)
 
 ## ------------------------------------------------
+## Method `data_transformer$fit_public`
+## ------------------------------------------------
+
+transformer <- data_transformer$new()
+transformer$fit_public(list(
+  age = public_continuous(18, 100),
+  sex = public_categorical(c("F", "M"))
+))
+transformer$transform(data.frame(age = c(30, 120), sex = c("M", "F")))
+
+## ------------------------------------------------
 ## Method `data_transformer$transform`
 ## ------------------------------------------------
 
@@ -248,6 +259,7 @@ Processing Systems, 32.
 \item \href{#method-data_transformer-fit_continuous}{\code{data_transformer$fit_continuous()}}
 \item \href{#method-data_transformer-fit_discrete}{\code{data_transformer$fit_discrete()}}
 \item \href{#method-data_transformer-fit}{\code{data_transformer$fit()}}
+\item \href{#method-data_transformer-fit_public}{\code{data_transformer$fit_public()}}
 \item \href{#method-data_transformer-transform_continuous}{\code{data_transformer$transform_continuous()}}
 \item \href{#method-data_transformer-transform_discrete}{\code{data_transformer$transform_discrete()}}
 \item \href{#method-data_transformer-transform}{\code{data_transformer$transform()}}
@@ -350,7 +362,11 @@ Recommended for columns with multi-modal or skewed distributions.
 Defaults to FALSE (standard z-score normalization).}
 
 \item{\code{n_modes}}{Integer. Maximum number of Gaussian components for GMM fitting.
-The actual number may be lower if modes with weight < 0.01 are pruned.
+The actual number may be lower: modes backed by fewer than
+\code{max(10, 0.01 * n)} records are pruned, and spreads are floored at 1\\%
+of the column's standard deviation, so that no mode reproduces a single
+record. This limits memorisation but is not a privacy guarantee; see
+\code{fit_public()}.
 Only used when \code{mode_specific = TRUE}. Defaults to 10.}
 }
 \if{html}{\out{</div>}}
@@ -372,6 +388,55 @@ transformer$fit(data, mode_specific = TRUE, n_modes = 10)
 mixed <- data.frame(x = rnorm(100), category = sample(c("a", "b"), 100, TRUE))
 transformer$fit(mixed, discrete_columns = c("category"))
 transformer$fit(mixed, discrete_columns = 2)
+}
+\if{html}{\out{</div>}}
+
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-data_transformer-fit_public"></a>}}
+\if{latex}{\out{\hypertarget{method-data_transformer-fit_public}{}}}
+\subsection{Method \code{fit_public()}}{
+Fit the transformer from public information only, without looking at
+any data.
+
+A transformer fitted with \code{fit()} stores statistics of the data it was
+fitted on (means, standard deviations, category levels, mixture
+components). Because the same transformer is needed to decode synthetic
+samples, those statistics are released with a model, outside any
+differential-privacy guarantee. \code{fit_public()} builds the transformer
+from a schema of public bounds and category domains instead, so it
+spends no privacy budget and reveals nothing about the records.
+
+Continuous columns are clipped to their bounds and scaled linearly into
+\verb{[-1, 1]}; the inverse transform clips back to the bounds. Categorical
+columns are one-hot encoded over the given levels. Mode-specific
+normalisation is not available, since it needs a mixture fitted to data.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{data_transformer$fit_public(columns)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{columns}}{A named list, in the order of the data's columns, whose
+elements are built with \code{\link[=public_continuous]{public_continuous()}} or \code{\link[=public_categorical]{public_categorical()}}.
+The names must match the data's column names.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+The transformer object (invisibly).
+}
+\subsection{Examples}{
+\if{html}{\out{<div class="r example copy">}}
+\preformatted{transformer <- data_transformer$new()
+transformer$fit_public(list(
+  age = public_continuous(18, 100),
+  sex = public_categorical(c("F", "M"))
+))
+transformer$transform(data.frame(age = c(30, 120), sex = c("M", "F")))
 }
 \if{html}{\out{</div>}}
 

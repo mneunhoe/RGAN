@@ -22,7 +22,7 @@ dp_noise_only_step(
 
 \item{noise_multiplier}{Gaussian noise multiplier}
 
-\item{expected_batch_size}{Divisor, \code{sampling_rate * n_samples}}
+\item{expected_batch_size}{The public divisor L of the noisy sum}
 
 \item{secure_rng}{Use cryptographically secure RNG}
 }

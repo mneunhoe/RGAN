@@ -16,7 +16,8 @@ dp_discriminator_step(
   d_optim,
   max_grad_norm,
   noise_multiplier,
-  secure_rng = TRUE
+  secure_rng = TRUE,
+  expected_batch_size = sampling_rate * n_samples
 )
 }
 \arguments{
@@ -43,6 +44,11 @@ dp_discriminator_step(
 \item{noise_multiplier}{Gaussian noise multiplier}
 
 \item{secure_rng}{Use cryptographically secure RNG (slower but secure)}
+
+\item{expected_batch_size}{The public divisor L of the noisy gradient sum.
+\code{dp_gan_trainer()} passes \code{batch_size} when the sampling rate was
+supplied, so that nothing in the release depends on the dataset size.
+Defaults to \code{sampling_rate * n_samples}.}
 }
 \value{
 Scalar loss value
@@ -55,7 +61,8 @@ per-sample gradient clipping and secure Gaussian noise.
 The quantity released to the optimizer is the Poisson-subsampled sum of
 per-sample gradients, each clipped to L2 norm \code{max_grad_norm}, perturbed
 by Gaussian noise of scale \code{noise_multiplier * max_grad_norm}, and then
-divided by the \emph{expected} batch size \code{sampling_rate * n_samples}.
+divided by the expected batch size \code{expected_batch_size}, a public
+constant.
 
 The divisor must not depend on the realised batch size. The privacy analysis
 -- and the accountant in \code{rdp_sgm()} -- covers the noisy \emph{sum}

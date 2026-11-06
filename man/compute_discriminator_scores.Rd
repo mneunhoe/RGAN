@@ -34,6 +34,8 @@ A list with:
 \itemize{
 \item d_score_fake: Matrix of discriminator scores (N_discriminators x N_samples)
 \item d_score_real: Vector of mean discriminator scores on real data (length N_discriminators)
+\item d_score_real_sum: The corresponding sums, for normalising by a
+public count instead of the number of records
 \item n_real_units: Number of independently scored units averaged into each
 entry of d_score_real. Equals the number of real records unless
 \code{pac > 1}, in which case it is \code{n / pac}. Pass this as \code{real_N} to

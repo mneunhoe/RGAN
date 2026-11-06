@@ -69,11 +69,20 @@ Bounds the sensitivity of individual gradients. Defaults to 1.0.}
 If NULL (default), it will be calibrated to achieve target_epsilon over the
 specified epochs. Higher values provide more privacy but reduce utility.}
 
-\item{sampling_rate}{Expected sampling rate for Poisson subsampling. If NULL
-(default), calculated as batch_size / nrow(data). Must be between 0 and 1.}
+\item{sampling_rate}{Poisson sampling rate q, between 0 and 1. \strong{Pass it
+explicitly to protect the number of records.} The guarantee is for
+add/remove-one adjacency, under which the dataset size n is private: every
+parameter of the mechanism must then be fixed without looking at the data.
+If NULL (default), q is derived as \code{batch_size / nrow(data)}; n then
+shapes the mechanism and can be read off the model, so it is not protected,
+a warning is given and \code{privacy$n_public} is TRUE.}
 
-\item{batch_size}{Target batch size for training. With Poisson subsampling,
-actual batch sizes will vary. Defaults to 50.}
+\item{batch_size}{Expected batch size L. With Poisson subsampling the
+realised batch size varies; the noisy gradient sum is divided by this
+public constant (and the generator is updated on batches of this size).
+When \code{sampling_rate} is supplied, choose \code{batch_size} close to
+\code{sampling_rate} times your (approximate) number of records, or the
+effective learning rate is rescaled. Defaults to 50.}
 
 \item{epochs}{The number of training epochs. Defaults to 50.}
 
@@ -148,8 +157,10 @@ generator losses. It does not cover a \code{data_transformer} fitted on the
 raw data, whose statistics (means, standard deviations, category levels,
 mode-specific mixture components) are released with the model when it is
 used to decode samples; fit it on public information or DP statistics for an
-end-to-end guarantee. The number of records is used non-privately (it sets
-the default sampling rate) and can be read off the returned model.
+end-to-end guarantee (see \code{data_transformer$fit_public()}). The number of
+records is protected only when \code{sampling_rate} is supplied; when it is
+derived from the data, n shapes the mechanism and can be read off the model
+(\code{privacy$n_public} records which case applies).
 }
 \examples{
 \dontrun{
@@ -158,13 +169,20 @@ the default sampling rate) and can be read off the returned model.
 
 # Load data
 data <- sample_toydata()
+# A transformer built from public bounds, not fitted to the data
 transformer <- data_transformer$new()
-transformer$fit(data)
+transformer$fit_public(list(
+  x = public_continuous(-5, 5),
+  y = public_continuous(-5, 25)
+))
 transformed_data <- transformer$transform(data)
 
-# Train with differential privacy (epsilon = 1)
+# Train with differential privacy (epsilon = 1). Passing sampling_rate
+# keeps the number of records out of the mechanism.
 trained_gan <- dp_gan_trainer(
   transformed_data,
+  sampling_rate = 0.05,
+  batch_size = 50,
   target_epsilon = 1.0,
   target_delta = 1e-5,
   max_grad_norm = 1.0,

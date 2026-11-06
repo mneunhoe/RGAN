@@ -82,7 +82,33 @@ sample_synthetic_data <-
     # Create an R array/matrix from the torch_tensor
     synth_data <- torch::as_array(fake_data$detach()$cpu())
     if (!is.null(transformer)) {
+      warn_if_data_fitted_transformer(trained_gan, transformer)
       synth_data <- transformer$inverse_transform(synth_data)
     }
     return(synth_data)
   }
+
+
+#' @title Warn About a Data-Fitted Transformer on a DP Model
+#'
+#' @description A `data_transformer` fitted with `fit()` carries statistics of
+#'   the raw data that are released alongside a differentially private model
+#'   whenever it is used to decode samples. This warns when such a transformer
+#'   is used with a model from `dp_gan_trainer()`.
+#'
+#' @param trained_gan A trained model.
+#' @param transformer A `data_transformer`.
+#' @return NULL, invisibly.
+#' @keywords internal
+warn_if_data_fitted_transformer <- function(trained_gan, transformer) {
+  if (!is.null(trained_gan$privacy) && !isTRUE(transformer$public)) {
+    cli::cli_alert_warning(paste0(
+      "This transformer was fitted on data: its statistics (means, standard ",
+      "deviations, category levels, mixture components) are outside the ",
+      "model's differential-privacy guarantee. Use ",
+      "data_transformer$fit_public() with public bounds and category domains ",
+      "for an end-to-end guarantee."
+    ))
+  }
+  invisible(NULL)
+}

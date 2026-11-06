@@ -4,7 +4,12 @@
 \alias{sample_synthetic_data}
 \title{Sample Synthetic Data from a trained RGAN}
 \usage{
-sample_synthetic_data(trained_gan, transformer = NULL, n_samples = NULL)
+sample_synthetic_data(
+  trained_gan,
+  transformer = NULL,
+  n_samples = NULL,
+  condition = NULL
+)
 }
 \arguments{
 \item{trained_gan}{A trained RGAN object of class "trained_RGAN"}
@@ -12,9 +17,31 @@ sample_synthetic_data(trained_gan, transformer = NULL, n_samples = NULL)
 \item{transformer}{The transformer object used to pre-process the data}
 
 \item{n_samples}{The number of synthetic samples to generate. Defaults to NULL, which will use \code{trained_gan$settings$synthetic_examples}.}
+
+\item{condition}{Optional condition for a model trained with the
+\code{conditioning} argument of \code{\link[=gan_trainer]{gan_trainer()}}. A data.frame in the
+\strong{original} column space, where \code{NA} means "not observed": one row is
+broadcast to all \code{n_samples}, otherwise it must have \code{n_samples} rows.
+Columns that are not present count as unobserved. The data.frame is
+transformed with \code{transformer$transform()} after the \code{NA} cells have been
+filled with a placeholder, and the blocks of the \code{NA} cells are then
+masked out, so the placeholder never reaches the generator.
+
+With \code{condition = NULL} the behaviour depends on how the model was
+trained:
+\itemize{
+\item unconditional model: plain sampling, exactly as before;
+\item \code{conditioning$type = "random_mask"}: the all-unobserved mask, the
+unconditional mode that \code{cond_dropout} trains;
+\item \code{conditioning$type = "single_column"}: CTGAN's sampling
+procedure, a \verb{(column, category)} condition per row drawn from the
+\strong{empirical} frequency table (not the log-frequency table used
+during training), so the marginal of the conditioned column is
+preserved.
+}}
 }
 \value{
-Function to sample from a
+A data.frame of synthetic data (a matrix if no \code{transformer} is given).
 }
 \description{
 Provides a function that makes it easy to sample synthetic data from a Generator

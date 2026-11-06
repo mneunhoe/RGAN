@@ -16,14 +16,21 @@ TabularGenerator(
   residual = TRUE,
   attention = FALSE,
   attention_heads = 4,
-  attention_dropout = 0.1
+  attention_dropout = 0.1,
+  cond_dim = 0
 )
 }
 \arguments{
 \item{noise_dim}{The length of the noise vector per example}
 
 \item{output_info}{A list describing the output structure from data_transformer$output_info.
-Each element is a list with (dimension, type) where type is "linear", "mode_specific", or "softmax".}
+Each element is a list with (dimension, type) where type is one of
+\code{"linear"} (tanh head), \code{"mode_specific"} (Gumbel-Softmax mode indicator
+plus tanh value), \code{"softmax"} (Gumbel-Softmax), \code{"quantile"} (plain linear
+head, because Gaussian quantile-transformed columns are unbounded) or
+\code{"cossin"} (two outputs projected onto the unit circle, TabRep-style).
+The type \code{"index"} produced by \code{categorical_encoding = "embedding_ready"}
+has no head here and raises an error.}
 
 \item{hidden_units}{A list of the number of neurons per layer. Defaults to list(256, 256)
 as used in CTGAN.}
@@ -56,6 +63,11 @@ Defaults to FALSE.}
 Defaults to 4.}
 
 \item{attention_dropout}{Dropout rate for attention weights. Defaults to 0.1.}
+
+\item{cond_dim}{Width of an optional condition vector appended to the noise
+(see the \code{conditioning} argument of \code{\link[=gan_trainer]{gan_trainer()}}). Defaults to 0, which
+leaves the architecture unchanged. With \code{cond_dim > 0} the module's input
+is the \code{noise_dim + cond_dim} wide concatenation \code{cat(z, condition)}.}
 }
 \value{
 A torch::nn_module for the Tabular Generator
@@ -74,7 +86,9 @@ in deeper networks (enabled by default when consecutive layers have same width)
 \item \strong{Layer Normalization:} Alternative that works better with small batches
 \item \strong{Multiple activation functions:} ReLU, LeakyReLU, GELU, SiLU
 \item \strong{Weight initialization:} Xavier or Kaiming initialization
-\item \strong{Self-Attention:} Captures relationships between features
+\item \strong{Self-Attention:} Hidden-vector slice mixing (see
+\code{\link[=SelfAttention]{SelfAttention()}}; for attention over column tokens use
+\code{\link[=TokenGenerator]{TokenGenerator()}})
 \item \strong{Progressive Training:} Gradually increase network capacity
 }
 }

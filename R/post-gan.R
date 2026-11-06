@@ -416,6 +416,14 @@ compute_discriminator_scores <- function(trained_gan,
   # Score with the trained model's own discriminator, loading each checkpoint
   # into it, so that custom architectures and every trainer are supported.
   # Its weights, mode and device are restored on exit.
+  # A conditionally trained discriminator also takes the condition of each
+  # sample; score with the all-unobserved condition, the mode condition
+  # dropout trains. A discriminator conditioned on the instance-noise level
+  # takes sigma as one extra input after packing; score at sigma = 0.
+  cond_dim <- trained_gan$settings$cond_dim
+  if (is.null(cond_dim)) cond_dim <- 0L
+  sigma_column <- isTRUE(trained_gan$settings$instance_noise$condition_d)
+
   d_template <- trained_gan$discriminator
   restore_d <- borrow_module(d_template, device)
   on.exit(restore_d(), add = TRUE)
@@ -438,11 +446,14 @@ compute_discriminator_scores <- function(trained_gan,
     # packed once, consecutively, over the whole set; the last pack is padded
     # by wrapping around to the first candidates.
     d_score_fake[i, ] <- squash(score_rows(d_template, generated_samples, pac,
-                                           batch_size, pad = TRUE))
+                                           batch_size, pad = TRUE,
+                                           cond_dim = cond_dim,
+                                           sigma_column = sigma_column))
 
     # Real data: complete packs only, so no record is counted twice.
     real_scores <- squash(score_rows(d_template, real_data, pac, batch_size,
-                                     pad = FALSE))
+                                     pad = FALSE, cond_dim = cond_dim,
+                                     sigma_column = sigma_column))
     d_score_real[i] <- mean(real_scores)
     d_score_real_sum[i] <- sum(real_scores)
 
@@ -633,6 +644,15 @@ apply_post_gan_boosting <- function(trained_gan,
 
     # Generate samples
     z <- sample_noise(c(n_candidates, noise_dim))$to(device = device)
+    # Conditionally trained generators are sampled with the all-unobserved
+    # condition (the mode cond_dropout trains).
+    cd <- trained_gan$settings$cond_dim
+    if (!is.null(cd) && cd > 0) {
+      z <- torch::torch_cat(
+        list(z, torch::torch_zeros(c(n_candidates, cd),
+                                   device = z$device)$to(dtype = z$dtype)),
+        dim = 2)
+    }
     samples <- torch::with_no_grad({
       torch::as_array(g_template(z)$cpu())
     })
@@ -721,10 +741,15 @@ apply_post_gan_boosting <- function(trained_gan,
 #' @param pad If TRUE, pad the last incomplete pack by wrapping around to the
 #'   first rows and return one score per row of `x`. If FALSE, drop the
 #'   incomplete pack and return one score per complete pack.
+#' @param cond_dim Width of the all-unobserved condition appended to every
+#'   sample before packing, for conditionally trained discriminators.
+#' @param sigma_column Append an instance-noise level of 0 after packing, for
+#'   discriminators trained with `instance_noise$condition_d`.
 #'
 #' @return A numeric vector of scores.
 #' @keywords internal
-score_rows <- function(net, x, pac, batch_size, pad) {
+score_rows <- function(net, x, pac, batch_size, pad, cond_dim = 0L,
+                       sigma_column = FALSE) {
   n <- nrow(x)
   if (pac > 1) {
     if (pad) {
@@ -741,7 +766,14 @@ score_rows <- function(net, x, pac, batch_size, pad) {
   for (start in seq(1, length(idx), by = rows_per_batch)) {
     batch_idx <- idx[start:min(start + rows_per_batch - 1, length(idx))]
     batch <- x[batch_idx, , drop = FALSE]
+    if (cond_dim > 0) {
+      batch <- torch::torch_cat(list(
+        batch, torch::torch_zeros(c(nrow(batch), cond_dim),
+                                  dtype = batch$dtype, device = batch$device)
+      ), dim = 2)
+    }
     if (pac > 1) batch <- pack_samples(batch, pac)
+    if (sigma_column) batch <- append_sigma_column(batch, 0)
     s <- torch::with_no_grad(torch::as_array(net(batch)$cpu()))
     scores <- c(scores, as.vector(s))
   }

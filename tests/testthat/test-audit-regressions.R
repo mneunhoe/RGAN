@@ -49,7 +49,7 @@ test_that("#16: a value function can be passed as a function", {
   expect_output(print(g2), "custom function")
 
   expect_error(gan_trainer(sample_toydata(n = 200), value_function = "nope",
-                           epochs = 1), "value_function must be")
+                           epochs = 1), "Unknown value_function")
 })
 
 test_that("#17: torch_tensor input is accepted", {

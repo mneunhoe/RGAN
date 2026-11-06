@@ -18,7 +18,19 @@ gan_update_step(
   weight_clipper,
   gp_lambda = 0,
   track_loss = FALSE,
-  pac = 1
+  pac = 1,
+  regularization = NULL,
+  step = 1,
+  paired_loss = FALSE,
+  instance_noise = NULL,
+  augmentation = NULL,
+  na_state = NULL,
+  noise_scale = NULL,
+  output_info = NULL,
+  conditioning = NULL,
+  conditioning_meta = NULL,
+  data_matrix = NULL,
+  distillation = NULL
 )
 }
 \arguments{
@@ -49,9 +61,54 @@ gan_update_step(
 \item{track_loss}{Store the training losses as additional output. Defaults to FALSE.}
 
 \item{pac}{Number of samples to pack together for PacGAN. Defaults to 1 (no packing).}
+
+\item{regularization}{Optional resolved regularization list with the fields \code{type}
+(one of "none", "wgan-gp", "r1", "r2", "r1r2"), \code{gamma} and \code{lazy_interval}, as produced by
+\code{gan_trainer()}. Defaults to NULL (no zero-centred penalty; the \code{gp_lambda} path is used).}
+
+\item{step}{The index of the current discriminator step (1-based). Used to decide whether a
+lazily applied penalty is due on this step. Defaults to 1.}
+
+\item{paired_loss}{Set to TRUE if the generator loss depends on the real scores (as it does for
+the relativistic pairing loss). In that case the real scores are recomputed, without gradient,
+under the updated discriminator before the generator step. Defaults to FALSE, which reuses
+the detached real scores from the discriminator step.}
+
+\item{instance_noise}{Optional resolved instance-noise list, as produced by
+\code{resolve_instance_noise()} inside \code{\link[=gan_trainer]{gan_trainer()}}. Defaults to NULL (no instance noise).}
+
+\item{augmentation}{Optional resolved augmentation list, as produced by
+\code{resolve_augmentation()} inside \code{\link[=gan_trainer]{gan_trainer()}}. Defaults to NULL (no augmentation).}
+
+\item{na_state}{An environment holding the mutable state of the two adaptive controllers
+(\code{T}, \code{p} and \code{sigmoid_output}). Required when \code{instance_noise} or \code{augmentation} is given;
+the function updates it in place. Defaults to NULL.}
+
+\item{noise_scale}{Optional torch tensor of shape (1, data_dim) with the per-column instance
+noise multipliers, as produced by \code{instance_noise_scale()}. Defaults to NULL (multiplier 1).}
+
+\item{output_info}{Optional \code{output_info} list, used to determine the column blocks for the
+augmentation operations. Defaults to NULL.}
+
+\item{conditioning}{Optional resolved conditioning list, as produced by
+\code{resolve_conditioning()} inside \code{\link[=gan_trainer]{gan_trainer()}}. Defaults to NULL (unconditional training).}
+
+\item{conditioning_meta}{The conditioning metadata from \code{build_conditioning_meta()}.
+Required when \code{conditioning} is given.}
+
+\item{data_matrix}{The training data as a plain numeric matrix. Required when \code{conditioning}
+is given; it is the source of the condition values.}
+
+\item{distillation}{Optional resolved distillation list, as produced by
+\code{resolve_distillation()} inside \code{\link[=gan_trainer]{gan_trainer()}}. When given, a minibatch of teacher pairs
+\verb{(z, x_hat)} is drawn every step and \code{lambda * loss(G(z), x_hat)} is added to the
+generator loss; with \code{adversarial = FALSE} the whole discriminator step is skipped.
+Defaults to NULL (no distillation).}
 }
 \value{
-A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL
+A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL.
+With \code{distillation} the list also carries \code{distill_loss}, the unweighted (pre-\code{lambda})
+regression term of this step.
 }
 \description{
 Provides a function to perform a single GAN training update step,

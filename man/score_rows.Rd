@@ -4,7 +4,7 @@
 \alias{score_rows}
 \title{Score Rows with a (Packed) Discriminator}
 \usage{
-score_rows(net, x, pac, batch_size, pad)
+score_rows(net, x, pac, batch_size, pad, cond_dim = 0L, sigma_column = FALSE)
 }
 \arguments{
 \item{net}{The discriminator.}
@@ -19,6 +19,12 @@ to a multiple of \code{pac}.}
 \item{pad}{If TRUE, pad the last incomplete pack by wrapping around to the
 first rows and return one score per row of \code{x}. If FALSE, drop the
 incomplete pack and return one score per complete pack.}
+
+\item{cond_dim}{Width of the all-unobserved condition appended to every
+sample before packing, for conditionally trained discriminators.}
+
+\item{sigma_column}{Append an instance-noise level of 0 after packing, for
+discriminators trained with \code{instance_noise$condition_d}.}
 }
 \value{
 A numeric vector of scores.

@@ -10,7 +10,7 @@ builtin_value_function_name(value_function)
 \item{value_function}{A function.}
 }
 \value{
-One of "original", "wasserstein", "f-wgan" or "custom".
+The built-in's name, e.g. "original", or "custom".
 }
 \description{
 Maps a value function passed as a function back to the name

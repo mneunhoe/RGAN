@@ -14,9 +14,14 @@
 #'   torch::nn_module. Default is NULL which will create a simple fully connected network.
 #' @param discriminator The discriminator network. Expects a neural network provided as
 #'   torch::nn_module. Default is NULL which will create a simple fully connected network.
+#'   It must have a sigmoid output and no buffers: DP-SGD privatises parameter
+#'   gradients only, so buffers such as BatchNorm running statistics would be
+#'   updated from raw records outside the guarantee. Use LayerNorm or GroupNorm
+#'   instead of BatchNorm.
 #' @param base_lr The base learning rate for the optimizers. Default is 0.0001.
 #' @param target_epsilon Target epsilon for differential privacy. Training will
-#'   stop if this budget is exhausted. Defaults to 1.0.
+#'   stop before a step that would exceed this budget, and is refused if the
+#'   budget does not cover a single step. Defaults to 1.0.
 #' @param target_delta Target delta for differential privacy. Defaults to 1e-5.
 #' @param max_grad_norm Maximum gradient norm for per-sample gradient clipping.
 #'   Bounds the sensitivity of individual gradients. Defaults to 1.0.
@@ -33,7 +38,10 @@
 #' @param eval_dropout Should dropout be applied during sampling? Defaults to FALSE.
 #' @param synthetic_examples Number of synthetic examples to generate. Defaults to 500.
 #' @param plot_dimensions Which dimensions to plot. Defaults to c(1, 2).
-#' @param track_loss Store training losses as output. Defaults to FALSE.
+#' @param track_loss Store the generator loss as output. Defaults to FALSE.
+#'   The discriminator loss is not recorded: it is computed on the real
+#'   Poisson batch without noise, so releasing it would fall outside the
+#'   privacy guarantee. `losses$d_loss` is therefore `NULL`.
 #' @param device Device for computation ("cpu", "cuda", "mps"). Defaults to "cpu".
 #' @param seed Optional seed for reproducibility. Defaults to NULL.
 #' @param verbose Print privacy accounting information during training. Defaults to TRUE.
@@ -73,6 +81,14 @@
 #'
 #' The discriminator is trained with DP-SGD while the generator is trained normally
 #' (since it only sees synthetic data from the discriminator's gradients).
+#'
+#' \strong{What the guarantee covers}: the returned networks, checkpoints and
+#' generator losses. It does not cover a \code{data_transformer} fitted on the
+#' raw data, whose statistics (means, standard deviations, category levels,
+#' mode-specific mixture components) are released with the model when it is
+#' used to decode samples; fit it on public information or DP statistics for an
+#' end-to-end guarantee. The number of records is used non-privately (it sets
+#' the default sampling rate) and can be read off the returned model.
 #'
 #' @references
 #' Abadi, M., Chu, A., Goodfellow, I., McMahan, H. B., Mironov, I., Talwar, K., & Zhang, L. (2016).
@@ -272,6 +288,16 @@ dp_gan_trainer <- function(
   )
 
   total_planned_steps <- epochs * steps_per_epoch
+  if (max_steps < 1) {
+    stop(sprintf(paste0(
+      "The privacy budget (target_epsilon = %s, target_delta = %s) does not ",
+      "cover a single DP-SGD step at sampling_rate = %s and ",
+      "noise_multiplier = %s. Increase target_epsilon or noise_multiplier, ",
+      "or lower sampling_rate."),
+      format(target_epsilon), format(target_delta),
+      format(sampling_rate), format(noise_multiplier)
+    ), call. = FALSE)
+  }
   if (max_steps < total_planned_steps && verbose) {
     cli::cli_alert_info(sprintf(
       "Privacy budget allows %d steps (planned: %d). Training will stop early.",
@@ -299,6 +325,7 @@ dp_gan_trainer <- function(
   } else {
     d_net <- discriminator
   }
+  check_dp_discriminator(d_net)
 
   # Set up optimizers (no momentum for DP-SGD)
   g_optim <- torch::optim_sgd(g_net$parameters, lr = base_lr)
@@ -313,6 +340,13 @@ dp_gan_trainer <- function(
     } else if (noise_distribution == "uniform") {
       sample_noise <- torch_rand_ab
     }
+  }
+
+  if (track_loss && verbose) {
+    cli::cli_alert_info(paste0(
+      "track_loss = TRUE records the generator loss only. The discriminator ",
+      "loss is computed on real records without noise and is not released."
+    ))
   }
 
   # Sample fixed noise for progress visualization
@@ -338,10 +372,20 @@ dp_gan_trainer <- function(
   }
 
   # Main training loop
+  budget_exhausted <- FALSE
   for (epoch in 1:epochs) {
     for (step in 1:steps_per_epoch) {
-      # DP-SGD update for discriminator
-      d_loss <- dp_discriminator_step(
+      # Check the budget *before* the step: a step is only taken if the
+      # accountant can afford it. Checking afterwards released one step even
+      # when the budget allowed none.
+      if (accountant$steps >= max_steps) {
+        budget_exhausted <- TRUE
+        break
+      }
+
+      # DP-SGD update for discriminator. Its return value (the loss on the
+      # real batch) is computed without noise and is deliberately discarded.
+      dp_discriminator_step(
         data = data,
         n_samples = n_samples,
         sampling_rate = sampling_rate,
@@ -359,15 +403,6 @@ dp_gan_trainer <- function(
       # Update step counter
       accountant$step()
 
-      # Check if privacy budget exhausted (using pre-calculated max_steps)
-      if (accountant$steps >= max_steps) {
-        cli::cli_alert_warning(sprintf(
-          "Privacy budget exhausted at epoch %d, step %d (max_steps = %d).",
-          epoch, step, max_steps
-        ))
-        break
-      }
-
       # Standard generator update (no DP needed - uses only synthetic data)
       g_loss <- generator_step(
         batch_size = ceiling(sampling_rate * n_samples),
@@ -379,17 +414,11 @@ dp_gan_trainer <- function(
         g_optim = g_optim
       )
 
-      # Track losses
+      # Track losses. Only the generator loss is recorded: it depends on the
+      # data only through the privatised discriminator, so it is
+      # post-processing. The discriminator loss is not (see track_loss).
       if (track_loss) {
-        if (is.null(losses)) {
-          losses <- list(
-            g_loss = g_loss,
-            d_loss = d_loss
-          )
-        } else {
-          losses$g_loss <- c(losses$g_loss, g_loss)
-          losses$d_loss <- c(losses$d_loss, d_loss)
-        }
+        losses$g_loss <- c(losses$g_loss, g_loss)
       }
 
       cli::cli_progress_update()
@@ -432,8 +461,14 @@ dp_gan_trainer <- function(
       }
     }
 
-    # Check if privacy budget exhausted
-    if (accountant$steps >= max_steps) {
+    # Stop once the budget is spent, without warning when that is simply the
+    # end of the planned run.
+    if (budget_exhausted ||
+        (accountant$steps >= max_steps && epoch < epochs)) {
+      cli::cli_alert_warning(sprintf(
+        "Privacy budget exhausted after %d of %d planned steps (epoch %d).",
+        accountant$steps, total_planned_steps, epoch
+      ))
       break
     }
 
@@ -479,6 +514,10 @@ dp_gan_trainer <- function(
       noise_distribution = noise_distribution,
       sample_noise = sample_noise,
       data_type = data_type,
+      # DP training uses the original GAN loss on unpacked samples; recorded
+      # so that compute_discriminator_scores() and print() can read them.
+      value_function = "original",
+      pac = 1,
       base_lr = base_lr,
       batch_size = batch_size,
       epochs = epochs,
@@ -491,6 +530,33 @@ dp_gan_trainer <- function(
   )
   class(output) <- "trained_RGAN"
   return(output)
+}
+
+
+#' @title Check a Discriminator for DP-SGD Compatibility
+#'
+#' @description DP-SGD privatises the gradients of parameters only. A module
+#'   buffer -- BatchNorm's running mean and variance are the common case -- is
+#'   updated by forward passes on raw records in training mode, and would be
+#'   returned in the model and its checkpoints with no noise and no accounting.
+#'   Discriminators with buffers are therefore rejected, as Opacus'
+#'   `ModuleValidator` rejects BatchNorm.
+#'
+#' @param d_net A torch::nn_module.
+#' @return `d_net`, invisibly, if it has no buffers; otherwise an error.
+#' @keywords internal
+check_dp_discriminator <- function(d_net) {
+  buffers <- d_net$buffers
+  if (length(buffers) > 0) {
+    stop(sprintf(paste0(
+      "The discriminator has buffers (%s). DP-SGD only privatises parameter ",
+      "gradients, so buffers such as BatchNorm running statistics would be ",
+      "updated from raw records outside the privacy guarantee. Replace ",
+      "BatchNorm with LayerNorm or GroupNorm, or remove the buffers."),
+      paste(names(buffers), collapse = ", ")
+    ), call. = FALSE)
+  }
+  invisible(d_net)
 }
 
 
@@ -984,6 +1050,22 @@ fast_poisson_subsample <- function(n_samples, sampling_rate) {
 }
 
 
+#' @title Secure Uniform Draws using OpenDP
+#'
+#' @description Draw uniform random numbers on (0, 1) from OpenDP's
+#'   cryptographically secure generator, by the same Gaussian-then-CDF route as
+#'   \code{secure_poisson_subsample()}.
+#'
+#' @param n Number of draws.
+#' @return Numeric vector of length \code{n}.
+#' @keywords internal
+secure_uniform <- function(n) {
+  stats::pnorm(as.numeric(torch::as_array(
+    sample_secure_gaussian_like(torch::torch_zeros(as.integer(n)), 1.0)
+  )))
+}
+
+
 #' @title Sample Secure Gaussian Noise using OpenDP
 #'
 #' @description Generate Gaussian noise with the same shape as a tensor using
@@ -1140,7 +1222,7 @@ dp_discriminator_step <- function(
   }
 
   # Get the batch
-  real_data <- data[batch_indices]$to(device = device)
+  real_data <- data[batch_indices, , drop = FALSE]$to(device = device)
 
   # Generate fake data
   z <- sample_noise(c(actual_batch_size, noise_dim))$to(device = device)
@@ -1156,8 +1238,8 @@ dp_discriminator_step <- function(
 
   for (i in 1:actual_batch_size) {
     # Get single sample
-    real_sample <- real_data[i:i]
-    fake_sample <- fake_data[i:i]
+    real_sample <- real_data[i:i, , drop = FALSE]
+    fake_sample <- fake_data[i:i, , drop = FALSE]
 
     # Forward pass
     real_score <- d_net(real_sample)

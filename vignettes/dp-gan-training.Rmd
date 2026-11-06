@@ -127,6 +127,15 @@ transformed_data <- transformer$transform(data)
 cat("Transformed data shape:", dim(transformed_data), "\n")
 ```
 
+**The transformer is not private.** It is fitted on the raw data, and you need
+it again to decode synthetic samples, so its statistics -- means, standard
+deviations, category levels and, with `mode_specific = TRUE`, the fitted
+Gaussian mixture components -- are released alongside the DP generator. They
+are not covered by `target_epsilon`. With few rows a single outlier can get a
+mixture mode of its own, whose mean is that record. For an end-to-end
+guarantee, fit the transformer on public information (known bounds, known
+category domains) or on statistics released with their own DP budget.
+
 ## Training with Differential Privacy
 
 ### Basic DP Training
@@ -489,11 +498,8 @@ for (target in targets) {
 # Example: check if training converged before budget exhausted
 if (!is.null(dp_gan$losses)) {
   # Plot loss curves
-  par(mfrow = c(1, 2))
-
-  plot(dp_gan$losses$d_loss, type = "l", col = "blue",
-       main = "Discriminator Loss", xlab = "Step", ylab = "Loss")
-
+  # Only the generator loss is recorded under DP: the discriminator loss is
+  # computed on real records without noise, so it is not released.
   plot(dp_gan$losses$g_loss, type = "l", col = "red",
        main = "Generator Loss", xlab = "Step", ylab = "Loss")
 }
@@ -529,6 +535,13 @@ DP-GANs are appropriate when:
 
 4. **Composition**: If you perform multiple analyses on the same data, privacy
    budgets compose. Plan your total budget accordingly.
+
+   The guarantee covers the trained networks and checkpoints. It does not
+   cover the fitted `data_transformer` (see "Data Transformation" above).
+   The number of records `n` also enters training non-privately: the
+   default sampling rate is `batch_size / n`, and `n` can be read off the
+   returned model (`batch_size / privacy$sampling_rate`). Do not rely on the
+   size of the dataset staying secret.
 
 5. **Secure vs fast RNG**: The `secure_rng` parameter controls whether to use
    cryptographically secure random number generation:

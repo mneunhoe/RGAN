@@ -1,3 +1,74 @@
+# RGAN (development version)
+
+Fixes for the defects reported in GitHub issues #3-#27.
+
+## Differential privacy
+
+* `dp_gan_trainer()` checks the budget *before* each DP step and refuses to
+  start when `target_epsilon` does not cover a single step. It used to release
+  one step regardless (#3).
+* A run that uses exactly its planned steps no longer ends with a spurious
+  "budget exhausted" warning and a skipped final generator step (#13).
+* `track_loss = TRUE` records only the generator loss under DP. The
+  discriminator loss was computed on the real batch without noise, so it fell
+  outside the guarantee; `losses$d_loss` is now `NULL` (#4).
+* Discriminators with buffers (e.g. BatchNorm running statistics, updated from
+  raw records outside DP-SGD) are rejected (#5).
+* A Poisson batch of exactly one record no longer crashes training (#12).
+* `post_gan_boosting()` and `apply_post_gan_boosting()` gain `secure_rng`
+  (default `TRUE`): with `dp = TRUE` the exponential-mechanism selection is
+  drawn from OpenDP's secure generator rather than R's seedable Mersenne
+  Twister. A warning is given for `dp = TRUE, secure_rng = FALSE` with a seed
+  (#8).
+* With `pac > 1`, `apply_post_gan_boosting(dp = TRUE)` warns that the
+  `1 / n_real_units` sensitivity holds under replace-one adjacency only (#9).
+* The no-op weight clipper stored in `gan_trainer()`'s `settings` was a closure
+  over the trainer's frame and kept the training data alive; it is now a
+  package-level function (#10).
+* The documentation now states that a `data_transformer` fitted on raw data,
+  and the dataset size, are outside the DP guarantee (#6, #7).
+
+## Training
+
+* Custom `value_function`s passed as functions work (#16), and a supplied
+  `weight_clipper` is no longer overwritten by the built-in choice.
+* `torch_tensor` input to `gan_trainer()` works (#17).
+* WGAN weight clipping is applied after the critic update, so the critic stays
+  inside the clip bound (#18).
+* Early stopping restores a snapshot of the best weights; it used to reload the
+  live ones (#14). Early stopping without `validation_data` and without
+  `track_loss = TRUE` is an error rather than always stopping at epoch
+  `patience` (#15).
+* The exponential LR schedule was one epoch behind: epochs 1 and 2 both used
+  the initial LR (#26). Learning rates tuned with this schedule may need
+  revisiting.
+* `GAN_value_fct()` uses the non-saturating generator loss `-log D(G(z))`, and
+  offsets rather than clamps inside the logarithms so saturated scores keep a
+  gradient (#25). This changes training dynamics for `value_function =
+  "original"`.
+* `gradient_penalty()` works for image (4-D) input (#19).
+* `TabularGenerator` uses an identity output for z-scored `"linear"` columns;
+  the tanh capped generated values at +/- 1 SD (#21).
+
+## Post-GAN boosting
+
+* `compute_discriminator_scores()` packs PacGAN samples once over the whole
+  set, so scores stay aligned with their samples, contain no `NA`s and do not
+  depend on `batch_size` (#20).
+* Post-GAN boosting works on `dp_gan_trainer()` models (#11) and uses the
+  trained model's own networks (restored afterwards), so custom architectures
+  are supported.
+
+## Data transformer and persistence
+
+* Integer `discrete_columns` work when the data has column names; unknown
+  names and out-of-range indices are errors (#22).
+* `inverse_transform()` restores each discrete column's original class, so
+  codes such as `"01"` are no longer turned into numbers (#23).
+* `transform()` reports category levels not seen in `fit()` clearly (#27).
+* `save_gan()`/`load_gan()` keep checkpoints, the DP `privacy` record, and the
+  optimizers' classes and hyperparameters (#24).
+
 # RGAN 0.2.2
 
 ## The mechanism must match the accountant

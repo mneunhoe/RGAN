@@ -94,6 +94,14 @@ rejection_sample <-
 #' @param weighted_average Use weighted averaging (weights proportional to sqrt(step)).
 #'   Defaults to FALSE.
 #' @param averaging_window Number of final steps to average over. Defaults to NULL (all steps).
+#' @param secure_rng Only used when `dp = TRUE`. Draw the randomness of the
+#'   exponential-mechanism selection from OpenDP's cryptographically secure
+#'   generator, as `dp_gan_trainer(secure_rng = TRUE)` does for training.
+#'   Defaults to TRUE. With FALSE the selection uses R's Mersenne Twister, which
+#'   is predictable: anyone who knows or guesses the seed can recompute every
+#'   selection, so use FALSE for testing only. The weights are still computed
+#'   in floating point, with the usual caveats for the exponential mechanism
+#'   (Ilvento, 2020).
 #'
 #' @return A list with:
 #'   \itemize{
@@ -133,7 +141,8 @@ post_gan_boosting <-
            dp = FALSE,
            MW_epsilon = 0.1,
            weighted_average = FALSE,
-           averaging_window = NULL) {
+           averaging_window = NULL,
+           secure_rng = TRUE) {
 
     # ---- Input validation -------------------------------------------------
 
@@ -176,6 +185,11 @@ post_gan_boosting <-
         stop("dp = TRUE requires real_N to be the number of independently ",
              "scored records backing d_score_real (a positive number).",
              call. = FALSE)
+      }
+      if (isTRUE(secure_rng) && !requireNamespace("opendp", quietly = TRUE)) {
+        stop("Package 'opendp' is required for dp = TRUE with secure_rng = TRUE. ",
+             "Install it with install.packages('opendp'), or set ",
+             "secure_rng = FALSE for testing only.", call. = FALSE)
       }
     }
 
@@ -239,7 +253,13 @@ post_gan_boosting <-
                "values.", call. = FALSE)
         }
 
-        best_idx <- sample.int(n_disc, size = 1L, prob = p_U)
+        best_idx <- if (isTRUE(secure_rng)) {
+          # Inverse-CDF draw from a cryptographically secure uniform, so the
+          # selection is not a function of R's (seedable) RNG state.
+          min(n_disc, findInterval(secure_uniform(1L), cumsum(p_U)) + 1L)
+        } else {
+          sample.int(n_disc, size = 1L, prob = p_U)
+        }
       } else {
         # Without privacy, play an exact best response.
         best_idx <- which.max(U)
@@ -368,26 +388,30 @@ compute_discriminator_scores <- function(trained_gan,
 
   n_samples <- nrow(generated_samples)
   n_discriminators <- length(trained_gan$checkpoints$epochs)
+  n_real <- nrow(real_data)
+
+  # Settings missing from older or DP-trained models default to the original
+  # loss on unpacked samples, which is what dp_gan_trainer() trains.
+  pac <- trained_gan$settings$pac
+  if (is.null(pac)) pac <- 1L
+  if (n_real < pac) {
+    stop(sprintf("real_data has %d rows, fewer than pac = %d.", n_real, pac),
+         call. = FALSE)
+  }
 
   # Initialize score matrices
-  d_score_fake <- matrix(NA, nrow = n_discriminators, ncol = n_samples)
+  d_score_fake <- matrix(NA_real_, nrow = n_discriminators, ncol = n_samples)
   d_score_real <- numeric(n_discriminators)
   # Number of independently scored units behind each entry of d_score_real.
-  # With PacGAN each score covers `pac` records, so this is n / pac, not n.
-  n_real_units <- NA_integer_
+  # With PacGAN each score covers `pac` records, so this is n %/% pac, not n.
+  n_real_units <- n_real %/% pac
 
-  # Create a discriminator template with same architecture
-  value_function <- trained_gan$settings$value_function
-  data_dim <- ncol(generated_samples)
-  pac <- trained_gan$settings$pac
-  d_input_dim <- data_dim * pac
-
-  if (value_function != "original") {
-    d_template <- Discriminator(data_dim = d_input_dim, dropout_rate = 0.5, sigmoid = FALSE)
-  } else {
-    d_template <- Discriminator(data_dim = d_input_dim, dropout_rate = 0.5, sigmoid = TRUE)
-  }
-  d_template <- d_template$to(device = device)
+  # Score with the trained model's own discriminator, loading each checkpoint
+  # into it, so that custom architectures and every trainer are supported.
+  # Its weights, mode and device are restored on exit.
+  d_template <- trained_gan$discriminator
+  restore_d <- borrow_module(d_template, device)
+  on.exit(restore_d(), add = TRUE)
 
   cli::cli_progress_bar("Computing discriminator scores", total = n_discriminators)
 
@@ -403,60 +427,16 @@ compute_discriminator_scores <- function(trained_gan,
     d_template$load_state_dict(d_state)
     d_template$eval()
 
-    # Score fake samples in batches
-    fake_scores <- c()
-    for (start in seq(1, n_samples, by = batch_size)) {
-      end <- min(start + batch_size - 1, n_samples)
-      batch <- generated_samples[start:end, , drop = FALSE]
+    # Every candidate gets the score of the pack it is in. The candidates are
+    # packed once, consecutively, over the whole set; the last pack is padded
+    # by wrapping around to the first candidates.
+    d_score_fake[i, ] <- squash(score_rows(d_template, generated_samples, pac,
+                                           batch_size, pad = TRUE))
 
-      # Handle PacGAN if needed
-      if (pac > 1) {
-        batch_n <- nrow(batch)
-        usable_n <- batch_n - (batch_n %% pac)
-        if (usable_n > 0) {
-          batch <- batch[1:usable_n, , drop = FALSE]
-          batch <- pack_samples(batch, pac)
-        }
-      }
-
-      scores <- torch::with_no_grad({
-        torch::as_array(d_template(batch)$cpu())
-      })
-      fake_scores <- c(fake_scores, squash(as.vector(scores)))
-    }
-
-    # For unpacked samples when pac > 1, we need to expand scores
-    if (pac > 1) {
-      # Each score represents pac samples, expand accordingly
-      fake_scores <- rep(fake_scores, each = pac)[1:n_samples]
-    }
-
-    d_score_fake[i, ] <- fake_scores
-
-    # Score real samples
-    real_scores <- c()
-    n_real <- nrow(real_data)
-    for (start in seq(1, n_real, by = batch_size)) {
-      end <- min(start + batch_size - 1, n_real)
-      batch <- real_data[start:end, , drop = FALSE]
-
-      if (pac > 1) {
-        batch_n <- nrow(batch)
-        usable_n <- batch_n - (batch_n %% pac)
-        if (usable_n > 0) {
-          batch <- batch[1:usable_n, , drop = FALSE]
-          batch <- pack_samples(batch, pac)
-        }
-      }
-
-      scores <- torch::with_no_grad({
-        torch::as_array(d_template(batch)$cpu())
-      })
-      real_scores <- c(real_scores, squash(as.vector(scores)))
-    }
-
+    # Real data: complete packs only, so no record is counted twice.
+    real_scores <- squash(score_rows(d_template, real_data, pac, batch_size,
+                                     pad = FALSE))
     d_score_real[i] <- mean(real_scores)
-    if (i == 1L) n_real_units <- length(real_scores)
 
     cli::cli_progress_update()
   }
@@ -496,7 +476,21 @@ compute_discriminator_scores <- function(trained_gan,
 #'   was trained with a value function other than "original", whose discriminator
 #'   has no sigmoid output layer.
 #' @param device Device for computation. Defaults to trained_gan's device.
-#' @param seed Optional seed for reproducibility.
+#' @param seed Optional seed for reproducibility of the candidate generation.
+#'   With `dp = TRUE` and `secure_rng = TRUE` the private selection does not
+#'   use R's RNG, so the seed does not make it reproducible.
+#' @param secure_rng Passed to `post_gan_boosting()`: draw the private
+#'   selection from a cryptographically secure source. Only used with
+#'   `dp = TRUE`. Defaults to TRUE.
+#'
+#' @details
+#' With `dp = TRUE` the exponential mechanism is calibrated to a sensitivity of
+#' `1 / n_real_units` for the mean real-data score. With `pac = 1` (and so for
+#' every `dp_gan_trainer()` model) each record is scored on its own and this
+#' holds under add/remove-one adjacency, matching DP-SGD training. With
+#' `pac > 1` consecutive records are packed together, and inserting or deleting
+#' a record shifts every later pack; the bound then holds only under
+#' replace-one adjacency.
 #'
 #' @return A list with:
 #'   \itemize{
@@ -537,7 +531,8 @@ apply_post_gan_boosting <- function(trained_gan,
                                      averaging_window = NULL,
                                      score_transform = c("none", "sigmoid"),
                                      device = NULL,
-                                     seed = NULL) {
+                                     seed = NULL,
+                                     secure_rng = TRUE) {
 
   score_transform <- match.arg(score_transform)
 
@@ -557,6 +552,24 @@ apply_post_gan_boosting <- function(trained_gan,
       "dp = TRUE privatises discriminator selection only. These checkpoints ",
       "carry no privacy record, so the boosted samples are NOT differentially ",
       "private end to end. Train the GAN with dp_gan_trainer()."
+    ))
+  }
+
+  pac <- trained_gan$settings$pac
+  if (is.null(pac)) pac <- 1L
+  if (isTRUE(dp) && pac > 1) {
+    cli::cli_alert_warning(paste0(
+      "pac = ", pac, ": real records are scored in consecutive packs, so the ",
+      "1 / n_real_units sensitivity of the private selection holds under ",
+      "replace-one adjacency only, not the add/remove-one adjacency of ",
+      "dp_gan_trainer()."
+    ))
+  }
+  if (isTRUE(dp) && !isTRUE(secure_rng) && !is.null(seed)) {
+    cli::cli_alert_warning(paste0(
+      "dp = TRUE with secure_rng = FALSE and a seed: the private selection is ",
+      "a deterministic function of the data and the seed, so it is not ",
+      "differentially private. Use secure_rng = TRUE."
     ))
   }
 
@@ -587,24 +600,11 @@ apply_post_gan_boosting <- function(trained_gan,
 
   all_samples <- list()
 
-  # Create generator template
-  data_dim <- ncol(real_data_tensor)
-  if (!is.null(trained_gan$settings$output_info)) {
-    g_template <- TabularGenerator(
-      noise_dim = noise_dim,
-      output_info = trained_gan$settings$output_info,
-      hidden_units = trained_gan$settings$generator_hidden_units,
-      dropout_rate = 0.5,
-      tau = trained_gan$settings$gumbel_tau,
-      normalization = trained_gan$settings$generator_normalization,
-      activation = trained_gan$settings$generator_activation,
-      init_method = trained_gan$settings$generator_init,
-      residual = trained_gan$settings$generator_residual
-    )
-  } else {
-    g_template <- Generator(noise_dim = noise_dim, data_dim = data_dim, dropout_rate = 0.5)
-  }
-  g_template <- g_template$to(device = device)
+  # Generate with the trained model's own generator, loading each checkpoint
+  # into it; its weights, mode and device are restored on exit.
+  g_template <- trained_gan$generator
+  restore_g <- borrow_module(g_template, device)
+  on.exit(restore_g(), add = TRUE)
 
   for (i in seq_along(trained_gan$checkpoints$generators)) {
     g_state <- trained_gan$checkpoints$generators[[i]]
@@ -664,7 +664,8 @@ apply_post_gan_boosting <- function(trained_gan,
     dp = dp,
     MW_epsilon = MW_epsilon,
     weighted_average = weighted_average,
-    averaging_window = averaging_window
+    averaging_window = averaging_window,
+    secure_rng = secure_rng
   )
 
   # Inverse transform if transformer provided
@@ -679,4 +680,76 @@ apply_post_gan_boosting <- function(trained_gan,
     scores = result$d_score_PGB,
     n_unique = nrow(result$PGB_sample)
   ))
+}
+
+
+#' @title Score Rows with a (Packed) Discriminator
+#'
+#' @description Scores the rows of `x` in batches. With `pac > 1` the rows are
+#'   packed consecutively over the whole of `x` -- not per batch, which would
+#'   drop rows and shift later scores onto the wrong samples -- and each row
+#'   receives the score of its pack.
+#'
+#' @param net The discriminator.
+#' @param x A torch tensor with one row per sample.
+#' @param pac Pack size.
+#' @param batch_size Approximate number of rows per forward pass; rounded down
+#'   to a multiple of `pac`.
+#' @param pad If TRUE, pad the last incomplete pack by wrapping around to the
+#'   first rows and return one score per row of `x`. If FALSE, drop the
+#'   incomplete pack and return one score per complete pack.
+#'
+#' @return A numeric vector of scores.
+#' @keywords internal
+score_rows <- function(net, x, pac, batch_size, pad) {
+  n <- nrow(x)
+  if (pac > 1) {
+    if (pad) {
+      idx <- c(seq_len(n), rep_len(seq_len(n), (-n) %% pac))
+    } else {
+      idx <- seq_len(n - n %% pac)
+    }
+  } else {
+    idx <- seq_len(n)
+  }
+  rows_per_batch <- max(pac, batch_size - batch_size %% pac)
+
+  scores <- c()
+  for (start in seq(1, length(idx), by = rows_per_batch)) {
+    batch_idx <- idx[start:min(start + rows_per_batch - 1, length(idx))]
+    batch <- x[batch_idx, , drop = FALSE]
+    if (pac > 1) batch <- pack_samples(batch, pac)
+    s <- torch::with_no_grad(torch::as_array(net(batch)$cpu()))
+    scores <- c(scores, as.vector(s))
+  }
+
+  if (pac > 1 && pad) {
+    scores <- rep(scores, each = pac)[seq_len(n)]
+  }
+  scores
+}
+
+#' @title Temporarily Use a Trained Module
+#'
+#' @description Records a module's weights, training mode and device, moves it
+#'   to `device`, and returns a function that restores all three. Used to load
+#'   checkpoints into a trained model's own networks without changing the
+#'   model.
+#'
+#' @param net A torch::nn_module.
+#' @param device Device to move the module to.
+#' @return A function of no arguments that restores the module.
+#' @keywords internal
+borrow_module <- function(net, device) {
+  params <- net$parameters
+  original_device <- if (length(params) > 0) params[[1]]$device else NULL
+  original_state <- lapply(net$state_dict(), function(x) x$clone())
+  was_training <- isTRUE(net$training)
+  net$to(device = device)
+  function() {
+    net$load_state_dict(original_state)
+    if (!is.null(original_device)) net$to(device = original_device)
+    if (was_training) net$train() else net$eval()
+    invisible(NULL)
+  }
 }

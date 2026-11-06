@@ -54,7 +54,8 @@ gan_trainer(
 
 \item{noise_distribution}{The noise distribution. Expects a function that samples from a distribution and returns a torch_tensor. For convenience "normal" and "uniform" will automatically set a function. Defaults to "normal".}
 
-\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".}
+\item{value_function}{The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".
+A function identical to a built-in (e.g. \code{WGAN_value_fct}) is treated as that built-in. Any other function gets a default discriminator without a sigmoid output layer and no weight clipping unless \code{weight_clipper} is supplied.}
 
 \item{gp_lambda}{The gradient penalty coefficient for WGAN-GP training. Only used when value_function is "wgan-gp". Defaults to 10.}
 
@@ -72,7 +73,7 @@ gan_trainer(
 
 \item{ttur_factor}{A multiplier for the learning rate of the discriminator, to implement the two time scale update rule.}
 
-\item{weight_clipper}{The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.}
+\item{weight_clipper}{The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training. A function of the discriminator, applied after every discriminator update. Defaults to NULL, which uses \code{WGAN_weight_clipper} for "wasserstein" and no clipping otherwise.}
 
 \item{batch_size}{The number of training samples selected into the mini batch for training. Defaults to 50.}
 
@@ -98,13 +99,13 @@ gan_trainer(
 
 \item{validation_data}{Optional validation data for monitoring training. Should be in the same format as training data.}
 
-\item{early_stopping}{Enable early stopping based on validation metrics. Defaults to FALSE.}
+\item{early_stopping}{Enable early stopping based on validation metrics. Defaults to FALSE. Requires \code{validation_data}, or \code{track_loss = TRUE} to monitor the discriminator loss instead. The best weights seen are restored when training stops early.}
 
 \item{patience}{Number of epochs without improvement before stopping. Only used if early_stopping is TRUE. Defaults to 10.}
 
 \item{lr_schedule}{Learning rate schedule type. One of "constant" (default), "step", "exponential", or "cosine".
 "step" reduces LR by lr_decay_factor every lr_decay_steps epochs.
-"exponential" applies lr_decay_factor decay each epoch.
+"exponential" applies lr_decay_factor decay each epoch (epoch e + 1 trains at base_lr * lr_decay_factor^e).
 "cosine" uses cosine annealing from base_lr to 0 over all epochs.}
 
 \item{lr_decay_factor}{Multiplicative factor for learning rate decay. Used with "step" and "exponential" schedules. Defaults to 0.1.}

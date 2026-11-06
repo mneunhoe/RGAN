@@ -124,12 +124,13 @@ test_that("exponential schedule reduces learning rate each epoch", {
     seed = 123
   )
 
-  # After 5 epochs with 0.9 decay each epoch: 0.001 * 0.9^4 = 0.0006561
-  # (decay is applied at end of epoch, so after epoch 5 we've applied 4 decays)
+  # The schedule runs at the end of each epoch and sets the LR for the next
+  # one: epoch e + 1 trains at 0.001 * 0.9^e, so after epoch 5 the LR is
+  # 0.001 * 0.9^5.
   final_g_lr <- result$generator_optimizer$param_groups[[1]]$lr
 
   expect_true(final_g_lr < 0.001)
-  expect_equal(final_g_lr, 0.001 * 0.9^4, tolerance = 1e-6)
+  expect_equal(final_g_lr, 0.001 * 0.9^5, tolerance = 1e-6)
 })
 
 test_that("cosine schedule reduces learning rate", {
@@ -198,11 +199,13 @@ test_that("adjust_learning_rate helper function works correctly", {
   expect_equal(optim$param_groups[[1]]$lr, 0.00025)  # Two decays
 
   # Test exponential schedule
+  # Called at the end of epoch e, it sets the LR for epoch e + 1, which has
+  # had e decays (consistent with the step schedule).
   RGAN:::adjust_learning_rate(optim, 0.001, 1, 10, "exponential", 0.9, 5)
-  expect_equal(optim$param_groups[[1]]$lr, 0.001)  # First epoch, no decay yet
+  expect_equal(optim$param_groups[[1]]$lr, 0.001 * 0.9, tolerance = 1e-8)
 
   RGAN:::adjust_learning_rate(optim, 0.001, 3, 10, "exponential", 0.9, 5)
-  expect_equal(optim$param_groups[[1]]$lr, 0.001 * 0.9^2, tolerance = 1e-8)
+  expect_equal(optim$param_groups[[1]]$lr, 0.001 * 0.9^3, tolerance = 1e-8)
 
   # Test cosine schedule
   RGAN:::adjust_learning_rate(optim, 0.001, 5, 10, "cosine", 0.5, 5)

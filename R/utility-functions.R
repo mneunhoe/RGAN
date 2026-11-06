@@ -177,17 +177,22 @@ print.trained_RGAN <- function(x, ...) {
 
   # Training settings
   cat("Training Settings:\n")
-  cat(sprintf("  Value function: %s\n", x$settings$value_function))
+  vf <- x$settings$value_function
+  vf_label <- if (is.character(vf)) vf else {
+    name <- builtin_value_function_name(vf)
+    if (name == "custom") "custom function" else name
+  }
+  cat(sprintf("  Value function: %s\n", vf_label))
   cat(sprintf("  Epochs: %d\n", x$settings$epochs))
   cat(sprintf("  Batch size: %d\n", x$settings$batch_size))
   cat(sprintf("  Noise dimension: %d\n", x$settings$noise_dim))
   cat(sprintf("  Base learning rate: %s\n", format(x$settings$base_lr, scientific = FALSE)))
   cat(sprintf("  Device: %s\n", x$settings$device))
 
-  if (x$settings$value_function == "wgan-gp") {
+  if (identical(vf, "wgan-gp")) {
     cat(sprintf("  GP lambda: %s\n", x$settings$gp_lambda))
   }
-  if (x$settings$early_stopping) {
+  if (isTRUE(x$settings$early_stopping)) {
     cat(sprintf("  Early stopping: enabled (patience=%d)\n", x$settings$patience))
   }
   if (!is.null(x$settings$lr_schedule) && x$settings$lr_schedule != "constant") {
@@ -240,9 +245,11 @@ print.trained_RGAN <- function(x, ...) {
       # Average over last epoch's worth of steps or last 10, whichever is smaller
       n_avg <- min(10, n_losses)
       g_final <- mean(tail(x$losses$g_loss, n_avg))
-      d_final <- mean(tail(x$losses$d_loss, n_avg))
       cat(sprintf("  Generator loss: %.4f (avg of last %d steps)\n", g_final, n_avg))
-      cat(sprintf("  Discriminator loss: %.4f (avg of last %d steps)\n", d_final, n_avg))
+      if (length(x$losses$d_loss) > 0) {
+        d_final <- mean(tail(x$losses$d_loss, n_avg))
+        cat(sprintf("  Discriminator loss: %.4f (avg of last %d steps)\n", d_final, n_avg))
+      }
     }
   } else {
     cat("\nLosses: Not tracked (use track_loss=TRUE)\n")
@@ -307,7 +314,7 @@ plot_losses <- function(trained_gan, smooth = 0, ...) {
       result
     }
     g_loss <- ema(g_loss, smooth)
-    d_loss <- ema(d_loss, smooth)
+    if (length(d_loss) > 0) d_loss <- ema(d_loss, smooth)
   }
 
   steps <- seq_along(g_loss)
@@ -331,12 +338,16 @@ plot_losses <- function(trained_gan, smooth = 0, ...) {
     ...
   )
 
-  graphics::lines(steps, d_loss, col = viridis::viridis(2)[2])
+  # dp_gan_trainer() does not release the discriminator loss.
+  has_d_loss <- length(d_loss) > 0
+  if (has_d_loss) {
+    graphics::lines(steps, d_loss, col = viridis::viridis(2)[2])
+  }
 
   graphics::legend(
     "topright",
-    legend = c("Generator", "Discriminator"),
-    col = viridis::viridis(2),
+    legend = c("Generator", "Discriminator")[c(TRUE, has_d_loss)],
+    col = viridis::viridis(2)[c(TRUE, has_d_loss)],
     lty = 1,
     bty = "n"
   )

@@ -389,7 +389,9 @@ test_that("dp_gan_trainer tracks losses when requested", {
 
   expect_true(!is.null(result$losses))
   expect_true(length(result$losses$g_loss) > 0)
-  expect_true(length(result$losses$d_loss) > 0)
+  # The discriminator loss is computed on real records without noise and is
+  # not released (GitHub issue #4).
+  expect_null(result$losses$d_loss)
 })
 
 test_that("dp_gan_trainer stops when privacy budget exhausted", {
@@ -397,17 +399,35 @@ test_that("dp_gan_trainer stops when privacy budget exhausted", {
 
   data <- matrix(rnorm(200), ncol = 2)
 
-  # Very tight privacy budget
-  result <- suppressWarnings(dp_gan_trainer(
+  # q = 0.5, sigma = 3: the budget eps = 2 covers 5 of the 20 planned steps.
+  expect_equal(compute_max_steps(2, 1e-5, 0.5, 3), 5)
+  result <- suppressMessages(dp_gan_trainer(
     data,
-    epochs = 100,  # Many epochs
-    target_epsilon = 0.01,  # Very tight
-    noise_multiplier = 0.1,  # Will exhaust budget quickly
+    epochs = 10,
+    batch_size = 50,
+    target_epsilon = 2,
+    noise_multiplier = 3,
     verbose = FALSE
   ))
 
-  # Should have stopped early
-  expect_true(result$privacy$total_steps < 100 * ceiling(nrow(data) / 50))
+  # Stopped exactly at the budget, and never beyond it
+  expect_equal(result$privacy$total_steps, 5)
+  expect_lte(result$privacy$final_epsilon, 2)
+})
+
+test_that("dp_gan_trainer refuses a budget that covers no step", {
+  skip_if_no_opendp()
+
+  data <- matrix(rnorm(200), ncol = 2)
+
+  # A single step at sigma = 0.1 already costs far more than eps = 0.01.
+  # Previously one step was released anyway (GitHub issue #3).
+  expect_equal(compute_max_steps(0.01, 1e-5, 0.5, 0.1), 0)
+  expect_error(
+    dp_gan_trainer(data, epochs = 100, target_epsilon = 0.01,
+                   noise_multiplier = 0.1, verbose = FALSE),
+    "does not cover a single DP-SGD step"
+  )
 })
 
 test_that("generator_step produces reasonable loss", {

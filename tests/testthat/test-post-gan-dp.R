@@ -30,7 +30,10 @@ pick_once <- function(fx, real_N, MW_epsilon) {
   res <- post_gan_boosting(
     d_score_fake = fx$d_fake, d_score_real = fx$d_real, B = fx$B,
     real_N = real_N, steps = 1, N_generators = nrow(fx$d_fake),
-    dp = TRUE, MW_epsilon = MW_epsilon
+    dp = TRUE, MW_epsilon = MW_epsilon,
+    # Seeded draws keep these distributional checks reproducible; the secure
+    # source is exercised in test-audit-regressions.R.
+    secure_rng = FALSE
   )
   which.max(res$D_bar)
 }

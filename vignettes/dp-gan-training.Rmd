@@ -116,25 +116,30 @@ plot(data, col = rgb(0, 0, 0, 0.3), pch = 19, main = "Training Data",
 
 ## Data Transformation
 
-```{r transform-data}
-# Create and fit the data transformer
-transformer <- data_transformer$new()
-transformer$fit(data)
+You need the transformer again to decode synthetic samples, so whatever it
+stores is released alongside the DP generator. A transformer fitted with
+`fit()` stores statistics of the raw data -- means, standard deviations,
+category levels and, with `mode_specific = TRUE`, Gaussian mixture components
+-- none of which is covered by `target_epsilon`. For an end-to-end guarantee,
+build it with `fit_public()` from bounds and category domains chosen without
+looking at the data:
 
-# Transform the data
+```{r transform-data}
+# Public schema: bounds known in advance, not computed from the data
+transformer <- data_transformer$new()
+transformer$fit_public(list(
+  x = public_continuous(-5, 5),
+  y = public_continuous(-5, 5)
+))
+
+# Values are clipped to the bounds and scaled into [-1, 1]
 transformed_data <- transformer$transform(data)
 
 cat("Transformed data shape:", dim(transformed_data), "\n")
 ```
 
-**The transformer is not private.** It is fitted on the raw data, and you need
-it again to decode synthetic samples, so its statistics -- means, standard
-deviations, category levels and, with `mode_specific = TRUE`, the fitted
-Gaussian mixture components -- are released alongside the DP generator. They
-are not covered by `target_epsilon`. With few rows a single outlier can get a
-mixture mode of its own, whose mean is that record. For an end-to-end
-guarantee, fit the transformer on public information (known bounds, known
-category domains) or on statistics released with their own DP budget.
+Categorical columns use `public_categorical(levels)`. Decoding a DP model with
+a transformer fitted by `fit()` gives a warning.
 
 ## Training with Differential Privacy
 
@@ -157,6 +162,10 @@ dp_gan <- dp_gan_trainer(
   noise_dim = 32,
 
   # === Training Parameters ===
+  # Pass sampling_rate explicitly: then no mechanism parameter depends on the
+  # number of records, and n stays protected. batch_size is the expected batch
+  # size (the gradient divisor), so choose it near sampling_rate * n.
+  sampling_rate = 0.025,      # 100 / 4000 records
   batch_size = 100,
   epochs = 5,
   base_lr = 0.001,
@@ -536,12 +545,12 @@ DP-GANs are appropriate when:
 4. **Composition**: If you perform multiple analyses on the same data, privacy
    budgets compose. Plan your total budget accordingly.
 
-   The guarantee covers the trained networks and checkpoints. It does not
-   cover the fitted `data_transformer` (see "Data Transformation" above).
-   The number of records `n` also enters training non-privately: the
-   default sampling rate is `batch_size / n`, and `n` can be read off the
-   returned model (`batch_size / privacy$sampling_rate`). Do not rely on the
-   size of the dataset staying secret.
+   The guarantee covers the trained networks and checkpoints. It covers the
+   `data_transformer` only if it was built with `fit_public()` (see "Data
+   Transformation" above). The number of records `n` is protected only when
+   you pass `sampling_rate`: left to its default, the sampling rate is
+   `batch_size / n`, so `n` shapes the mechanism and can be read off the
+   returned model. `dp_gan$privacy$n_public` records which case applies.
 
 5. **Secure vs fast RNG**: The `secure_rng` parameter controls whether to use
    cryptographically secure random number generation:

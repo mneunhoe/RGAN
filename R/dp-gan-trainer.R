@@ -28,10 +28,19 @@
 #' @param noise_multiplier Multiplier for Gaussian noise added to gradients.
 #'   If NULL (default), it will be calibrated to achieve target_epsilon over the
 #'   specified epochs. Higher values provide more privacy but reduce utility.
-#' @param sampling_rate Expected sampling rate for Poisson subsampling. If NULL
-#'   (default), calculated as batch_size / nrow(data). Must be between 0 and 1.
-#' @param batch_size Target batch size for training. With Poisson subsampling,
-#'   actual batch sizes will vary. Defaults to 50.
+#' @param sampling_rate Poisson sampling rate q, between 0 and 1. \strong{Pass it
+#'   explicitly to protect the number of records.} The guarantee is for
+#'   add/remove-one adjacency, under which the dataset size n is private: every
+#'   parameter of the mechanism must then be fixed without looking at the data.
+#'   If NULL (default), q is derived as \code{batch_size / nrow(data)}; n then
+#'   shapes the mechanism and can be read off the model, so it is not protected,
+#'   a warning is given and \code{privacy$n_public} is TRUE.
+#' @param batch_size Expected batch size L. With Poisson subsampling the
+#'   realised batch size varies; the noisy gradient sum is divided by this
+#'   public constant (and the generator is updated on batches of this size).
+#'   When \code{sampling_rate} is supplied, choose \code{batch_size} close to
+#'   \code{sampling_rate} times your (approximate) number of records, or the
+#'   effective learning rate is rescaled. Defaults to 50.
 #' @param epochs The number of training epochs. Defaults to 50.
 #' @param plot_progress Monitor training progress with plots. Defaults to FALSE.
 #' @param plot_interval Number of training steps between plots. Defaults to "epoch".
@@ -87,8 +96,10 @@
 #' raw data, whose statistics (means, standard deviations, category levels,
 #' mode-specific mixture components) are released with the model when it is
 #' used to decode samples; fit it on public information or DP statistics for an
-#' end-to-end guarantee. The number of records is used non-privately (it sets
-#' the default sampling rate) and can be read off the returned model.
+#' end-to-end guarantee (see \code{data_transformer$fit_public()}). The number of
+#' records is protected only when \code{sampling_rate} is supplied; when it is
+#' derived from the data, n shapes the mechanism and can be read off the model
+#' (\code{privacy$n_public} records which case applies).
 #'
 #' @references
 #' Abadi, M., Chu, A., Goodfellow, I., McMahan, H. B., Mironov, I., Talwar, K., & Zhang, L. (2016).
@@ -107,13 +118,20 @@
 #'
 #' # Load data
 #' data <- sample_toydata()
+#' # A transformer built from public bounds, not fitted to the data
 #' transformer <- data_transformer$new()
-#' transformer$fit(data)
+#' transformer$fit_public(list(
+#'   x = public_continuous(-5, 5),
+#'   y = public_continuous(-5, 25)
+#' ))
 #' transformed_data <- transformer$transform(data)
 #'
-#' # Train with differential privacy (epsilon = 1)
+#' # Train with differential privacy (epsilon = 1). Passing sampling_rate
+#' # keeps the number of records out of the mechanism.
 #' trained_gan <- dp_gan_trainer(
 #'   transformed_data,
+#'   sampling_rate = 0.05,
+#'   batch_size = 50,
 #'   target_epsilon = 1.0,
 #'   target_delta = 1e-5,
 #'   max_grad_norm = 1.0,
@@ -243,9 +261,37 @@ dp_gan_trainer <- function(
   n_samples <- nrow(data)
   data_dim <- ncol(data)
 
-  # Calculate sampling rate
-  if (is.null(sampling_rate)) {
+  # Mechanism parameters. Under add/remove-one adjacency n is private, so the
+  # sampling rate q, the divisor L, the number of steps and the noise must not
+  # depend on it. With a supplied sampling_rate they do not: L = batch_size,
+  # steps = epochs * ceiling(1 / q), and the noise is calibrated from those.
+  # n is then used only to Poisson-sample the records, one by one.
+  n_public <- is.null(sampling_rate)
+  if (n_public) {
     sampling_rate <- min(batch_size / n_samples, 1.0)
+    # n is public on this path, so the divisor may use it (it equals
+    # batch_size unless batch_size exceeds n).
+    expected_batch_size <- sampling_rate * n_samples
+    cli::cli_alert_warning(paste0(
+      "sampling_rate was derived from the number of records (batch_size / n). ",
+      "The dataset size n is then NOT protected: it shapes the mechanism and ",
+      "can be read off the returned model. Only passing sampling_rate ",
+      "explicitly (with batch_size as the expected batch size) protects n."
+    ))
+  } else {
+    expected_batch_size <- batch_size
+    # A local diagnostic for the analyst, who holds the data; it is printed,
+    # not released with the model.
+    realised_mean <- sampling_rate * n_samples
+    if (verbose && abs(realised_mean - batch_size) / batch_size > 0.5) {
+      cli::cli_alert_info(sprintf(paste0(
+        "batch_size (%s) is the gradient divisor, but sampling_rate selects ",
+        "about %s records per step: the effective learning rate is scaled by ",
+        "%.2f. Choose batch_size close to sampling_rate times the dataset size."),
+        format(batch_size), format(round(realised_mean, 1)),
+        realised_mean / batch_size
+      ))
+    }
   }
 
   # Calculate number of steps
@@ -389,6 +435,7 @@ dp_gan_trainer <- function(
         data = data,
         n_samples = n_samples,
         sampling_rate = sampling_rate,
+        expected_batch_size = expected_batch_size,
         noise_dim = noise_dim,
         sample_noise = sample_noise,
         device = device,
@@ -405,7 +452,7 @@ dp_gan_trainer <- function(
 
       # Standard generator update (no DP needed - uses only synthetic data)
       g_loss <- generator_step(
-        batch_size = ceiling(sampling_rate * n_samples),
+        batch_size = ceiling(expected_batch_size),
         noise_dim = noise_dim,
         sample_noise = sample_noise,
         device = device,
@@ -507,6 +554,9 @@ dp_gan_trainer <- function(
       noise_multiplier = noise_multiplier,
       max_grad_norm = max_grad_norm,
       sampling_rate = sampling_rate,
+      expected_batch_size = expected_batch_size,
+      # TRUE when sampling_rate was derived from n, which is then not protected.
+      n_public = n_public,
       total_steps = accountant$steps
     ),
     settings = list(
@@ -1116,7 +1166,7 @@ sample_secure_gaussian_like <- function(tensor, scale) {
 #' @param d_optim Discriminator optimizer
 #' @param max_grad_norm Maximum gradient norm for clipping
 #' @param noise_multiplier Gaussian noise multiplier
-#' @param expected_batch_size Divisor, \code{sampling_rate * n_samples}
+#' @param expected_batch_size The public divisor L of the noisy sum
 #' @param secure_rng Use cryptographically secure RNG
 #'
 #' @return \code{0}, the loss over an empty batch
@@ -1158,6 +1208,10 @@ dp_noise_only_step <- function(d_net, d_optim, max_grad_norm, noise_multiplier,
 #' @param max_grad_norm Maximum gradient norm for clipping
 #' @param noise_multiplier Gaussian noise multiplier
 #' @param secure_rng Use cryptographically secure RNG (slower but secure)
+#' @param expected_batch_size The public divisor L of the noisy gradient sum.
+#'   \code{dp_gan_trainer()} passes \code{batch_size} when the sampling rate was
+#'   supplied, so that nothing in the release depends on the dataset size.
+#'   Defaults to \code{sampling_rate * n_samples}.
 #'
 #' @return Scalar loss value
 #'
@@ -1165,7 +1219,8 @@ dp_noise_only_step <- function(d_net, d_optim, max_grad_norm, noise_multiplier,
 #' The quantity released to the optimizer is the Poisson-subsampled sum of
 #' per-sample gradients, each clipped to L2 norm \code{max_grad_norm}, perturbed
 #' by Gaussian noise of scale \code{noise_multiplier * max_grad_norm}, and then
-#' divided by the \emph{expected} batch size \code{sampling_rate * n_samples}.
+#' divided by the expected batch size \code{expected_batch_size}, a public
+#' constant.
 #'
 #' The divisor must not depend on the realised batch size. The privacy analysis
 #' -- and the accountant in \code{rdp_sgm()} -- covers the noisy \emph{sum}
@@ -1192,7 +1247,8 @@ dp_discriminator_step <- function(
     d_optim,
     max_grad_norm,
     noise_multiplier,
-    secure_rng = TRUE
+    secure_rng = TRUE,
+    expected_batch_size = sampling_rate * n_samples
 ) {
   # Poisson subsample the batch
   if (secure_rng) {
@@ -1203,12 +1259,12 @@ dp_discriminator_step <- function(
 
   actual_batch_size <- length(batch_indices)
 
-  # The divisor is the expected batch size, which is a constant fixed by the
-  # sampling rate and the dataset size. See the details section: using the
-  # realised batch size here would leak it.
-  expected_batch_size <- sampling_rate * n_samples
+  # The divisor is the expected batch size, a constant fixed before training.
+  # See the details section: using the realised batch size here would leak it.
+  # Forcing the default (sampling_rate * n_samples) here, before sampling.
+  force(expected_batch_size)
   if (!is.finite(expected_batch_size) || expected_batch_size <= 0) {
-    stop("sampling_rate * n_samples must be positive; got ",
+    stop("The expected batch size must be positive; got ",
          expected_batch_size, ". A zero sampling rate releases nothing and ",
          "leaves the normalisation undefined.", call. = FALSE)
   }

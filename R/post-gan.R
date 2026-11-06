@@ -74,6 +74,10 @@ rejection_sample <-
 #' @param d_score_real Vector of mean discriminator scores on real data (length N_discriminators).
 #' @param B Matrix of candidate synthetic samples (N_samples x data_dim).
 #' @param real_N Number of *independently scored* records behind `d_score_real`.
+#'   With `dp = TRUE` it must be a public count under add/remove-one adjacency:
+#'   either a number fixed independently of the data, with `d_score_real`
+#'   computed as `min(1, sum / real_N)`, or the number of records when that is
+#'   treated as public.
 #'   The exponential mechanism is calibrated to a sensitivity of `1 / real_N`, so
 #'   this must be the number of scores that were averaged, not the number of rows
 #'   in the training data. With PacGAN packing (`pac > 1`) each score covers `pac`
@@ -344,6 +348,8 @@ post_gan_boosting <-
 #'   \itemize{
 #'     \item d_score_fake: Matrix of discriminator scores (N_discriminators x N_samples)
 #'     \item d_score_real: Vector of mean discriminator scores on real data (length N_discriminators)
+#'     \item d_score_real_sum: The corresponding sums, for normalising by a
+#'       public count instead of the number of records
 #'     \item n_real_units: Number of independently scored units averaged into each
 #'       entry of d_score_real. Equals the number of real records unless
 #'       `pac > 1`, in which case it is `n / pac`. Pass this as `real_N` to
@@ -402,6 +408,7 @@ compute_discriminator_scores <- function(trained_gan,
   # Initialize score matrices
   d_score_fake <- matrix(NA_real_, nrow = n_discriminators, ncol = n_samples)
   d_score_real <- numeric(n_discriminators)
+  d_score_real_sum <- numeric(n_discriminators)
   # Number of independently scored units behind each entry of d_score_real.
   # With PacGAN each score covers `pac` records, so this is n %/% pac, not n.
   n_real_units <- n_real %/% pac
@@ -437,6 +444,7 @@ compute_discriminator_scores <- function(trained_gan,
     real_scores <- squash(score_rows(d_template, real_data, pac, batch_size,
                                      pad = FALSE))
     d_score_real[i] <- mean(real_scores)
+    d_score_real_sum[i] <- sum(real_scores)
 
     cli::cli_progress_update()
   }
@@ -444,6 +452,7 @@ compute_discriminator_scores <- function(trained_gan,
   return(list(
     d_score_fake = d_score_fake,
     d_score_real = d_score_real,
+    d_score_real_sum = d_score_real_sum,
     n_real_units = n_real_units,
     epochs = trained_gan$checkpoints$epochs
   ))
@@ -484,13 +493,17 @@ compute_discriminator_scores <- function(trained_gan,
 #'   `dp = TRUE`. Defaults to TRUE.
 #'
 #' @details
-#' With `dp = TRUE` the exponential mechanism is calibrated to a sensitivity of
-#' `1 / n_real_units` for the mean real-data score. With `pac = 1` (and so for
-#' every `dp_gan_trainer()` model) each record is scored on its own and this
-#' holds under add/remove-one adjacency, matching DP-SGD training. With
-#' `pac > 1` consecutive records are packed together, and inserting or deleting
-#' a record shifts every later pack; the bound then holds only under
-#' replace-one adjacency.
+#' With `dp = TRUE` each real record is scored on its own (`pac = 1`), so the
+#' real-data payoff has sensitivity `1 / N` under add/remove-one adjacency,
+#' matching DP-SGD training. For a `dp_gan_trainer()` model trained with an
+#' explicit `sampling_rate`, N is the public count
+#' `expected_batch_size / sampling_rate` and the payoff is
+#' `min(1, sum of scores / N)`, so the number of records stays protected.
+#' Otherwise N is the number of records, which is then treated as public.
+#'
+#' `dp = TRUE` is refused for `pac > 1`: consecutive records are packed
+#' together, inserting or deleting one shifts every later pack, and the bound
+#' would hold only under replace-one adjacency.
 #'
 #' @return A list with:
 #'   \itemize{
@@ -558,12 +571,14 @@ apply_post_gan_boosting <- function(trained_gan,
   pac <- trained_gan$settings$pac
   if (is.null(pac)) pac <- 1L
   if (isTRUE(dp) && pac > 1) {
-    cli::cli_alert_warning(paste0(
-      "pac = ", pac, ": real records are scored in consecutive packs, so the ",
-      "1 / n_real_units sensitivity of the private selection holds under ",
-      "replace-one adjacency only, not the add/remove-one adjacency of ",
-      "dp_gan_trainer()."
-    ))
+    stop(paste0(
+      "dp = TRUE is not supported with pac = ", pac, ". Real records are ",
+      "scored in consecutive packs, so inserting or deleting one record ",
+      "changes every later pack: the 1 / n_real_units sensitivity the ",
+      "selection is calibrated to holds under replace-one adjacency only, not ",
+      "the add/remove-one adjacency of dp_gan_trainer(). Use a model trained ",
+      "with pac = 1 (every dp_gan_trainer() model is), or set dp = FALSE."
+    ), call. = FALSE)
   }
   if (isTRUE(dp) && !isTRUE(secure_rng) && !is.null(seed)) {
     cli::cli_alert_warning(paste0(
@@ -638,15 +653,22 @@ apply_post_gan_boosting <- function(trained_gan,
     score_transform = score_transform
   )
 
-  # Sensitivity of d_score_real is 1 / (number of independently scored units).
-  # With PacGAN each score covers `pac` records, so that count is n / pac and
-  # using nrow(real_data) would understate the privacy loss by a factor of pac.
+  # Sensitivity of the real-data payoff. By default it is the mean over the
+  # n scored records, with sensitivity 1 / n -- which treats n as public. A DP
+  # model trained with an explicit sampling_rate protects n, so normalise by
+  # the public count N = batch_size / sampling_rate instead: min(1, sum / N)
+  # has sensitivity 1 / N under add/remove-one adjacency, and no part of the
+  # selection depends on n.
   real_N <- scores$n_real_units
-  if (isTRUE(dp) && real_N != nrow(real_data_tensor)) {
-    cli::cli_alert_info(paste0(
-      "Sensitivity calibrated to ", real_N, " independently scored units ",
-      "(pac = ", trained_gan$settings$pac, ", ",
-      nrow(real_data_tensor), " records)."
+  d_score_real <- scores$d_score_real
+  privacy <- trained_gan$privacy
+  if (isTRUE(dp) && !is.null(privacy) && identical(privacy$n_public, FALSE)) {
+    real_N <- public_record_count(privacy)
+    d_score_real <- pmin(1, scores$d_score_real_sum / real_N)
+    cli::cli_alert_info(sprintf(paste0(
+      "Real-data scores normalised by the public count %s ",
+      "(expected_batch_size / sampling_rate), so n stays protected."),
+      format(real_N)
     ))
   }
 
@@ -655,7 +677,7 @@ apply_post_gan_boosting <- function(trained_gan,
   # Apply post-GAN boosting
   result <- post_gan_boosting(
     d_score_fake = scores$d_score_fake,
-    d_score_real = scores$d_score_real,
+    d_score_real = d_score_real,
     B = B,
     real_N = real_N,
     steps = steps,
@@ -670,6 +692,7 @@ apply_post_gan_boosting <- function(trained_gan,
 
   # Inverse transform if transformer provided
   if (!is.null(transformer)) {
+    warn_if_data_fitted_transformer(trained_gan, transformer)
     result$PGB_sample <- transformer$inverse_transform(result$PGB_sample)
   }
 
@@ -752,4 +775,22 @@ borrow_module <- function(net, device) {
     if (was_training) net$train() else net$eval()
     invisible(NULL)
   }
+}
+
+
+#' @title Public Record Count of a DP Model
+#'
+#' @description The count `expected_batch_size / sampling_rate` implied by the
+#'   public mechanism parameters of a `dp_gan_trainer()` model.
+#'
+#' @param privacy The `privacy` element of a trained model.
+#' @return A positive number.
+#' @keywords internal
+public_record_count <- function(privacy) {
+  L <- privacy$expected_batch_size
+  if (is.null(L)) {
+    stop("This model does not record its expected batch size; retrain it ",
+         "with the current version of dp_gan_trainer().", call. = FALSE)
+  }
+  L / privacy$sampling_rate
 }

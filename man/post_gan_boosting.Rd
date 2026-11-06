@@ -28,6 +28,10 @@ Each row contains scores from one discriminator checkpoint for all candidate sam
 \item{B}{Matrix of candidate synthetic samples (N_samples x data_dim).}
 
 \item{real_N}{Number of \emph{independently scored} records behind \code{d_score_real}.
+With \code{dp = TRUE} it must be a public count under add/remove-one adjacency:
+either a number fixed independently of the data, with \code{d_score_real}
+computed as \code{min(1, sum / real_N)}, or the number of records when that is
+treated as public.
 The exponential mechanism is calibrated to a sensitivity of \code{1 / real_N}, so
 this must be the number of scores that were averaged, not the number of rows
 in the training data. With PacGAN packing (\code{pac > 1}) each score covers \code{pac}

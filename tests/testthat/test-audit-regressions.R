@@ -273,3 +273,148 @@ test_that("#24: save_gan/load_gan keep checkpoints and the optimizer class", {
   expect_s3_class(ldg$discriminator_optimizer, "optim_sgd")
   expect_equal(ldg$privacy$final_epsilon, dg$privacy$final_epsilon)
 })
+
+# ---- #6: mechanism parameters independent of n ------------------------------
+
+test_that("#6: with sampling_rate supplied, the mechanism does not depend on n", {
+  fit <- function(n) {
+    suppressMessages(dp_gan_trainer(
+      matrix(rnorm(2 * n), n, 2), sampling_rate = 0.1, batch_size = 20,
+      target_epsilon = 5, epochs = 2, secure_rng = FALSE, verbose = FALSE
+    ))
+  }
+  a <- fit(200)
+  b <- fit(201)
+  keys <- c("sampling_rate", "noise_multiplier", "total_steps",
+            "expected_batch_size")
+  expect_identical(a$privacy[keys], b$privacy[keys])
+  expect_equal(a$privacy$expected_batch_size, 20)
+  expect_false(a$privacy$n_public)
+  # n can no longer be read off the model
+  expect_equal(a$settings$batch_size / a$privacy$sampling_rate, 200)
+  expect_equal(b$settings$batch_size / b$privacy$sampling_rate, 200)
+})
+
+test_that("#6: deriving sampling_rate from n warns and is recorded", {
+  msgs <- character(0)
+  g <- withCallingHandlers(
+    dp_gan_trainer(matrix(rnorm(400), 200, 2), target_epsilon = 5, epochs = 1,
+                   secure_rng = FALSE, verbose = FALSE),
+    message = function(m) {
+      msgs <<- c(msgs, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_true(g$privacy$n_public)
+  expect_true(any(grepl("Only passing sampling_rate", msgs)))
+})
+
+test_that("#6: the gradient divisor is the supplied expected batch size", {
+  d_net <- torch::nn_sequential(torch::nn_linear(2, 1), torch::nn_sigmoid())
+  g_net <- torch::nn_linear(2, 2)
+  data <- torch::torch_randn(c(50, 2))
+  run <- function(L) {
+    torch::torch_manual_seed(1)
+    set.seed(1)
+    dp_discriminator_step(
+      data = data, n_samples = 50, sampling_rate = 1,  # every record sampled
+      noise_dim = 2, sample_noise = function(d) torch::torch_randn(d),
+      device = "cpu", g_net = g_net, d_net = d_net,
+      d_optim = torch::optim_sgd(d_net$parameters, lr = 0),
+      max_grad_norm = 1, noise_multiplier = 1e-12, secure_rng = FALSE,
+      expected_batch_size = L
+    )
+    as.numeric(d_net$parameters[[1]]$grad)
+  }
+  # Same clipped sum, divided by 10 vs 40: gradients differ by a factor of 4.
+  expect_equal(run(10) / run(40), rep(4, 2), tolerance = 1e-6)
+})
+
+test_that("#6: post-GAN boosting normalises by the public count", {
+  skip_if_no_opendp()
+  X <- matrix(rnorm(600), 300, 2)
+  g <- suppressMessages(dp_gan_trainer(
+    X, sampling_rate = 0.1, batch_size = 20, target_epsilon = 5, epochs = 4,
+    checkpoint_epochs = 2, secure_rng = FALSE, verbose = FALSE
+  ))
+  expect_equal(public_record_count(g$privacy), 200)
+  msgs <- character(0)
+  invisible(capture.output(withCallingHandlers(
+    apply_post_gan_boosting(g, X, n_candidates = 30, steps = 2, dp = TRUE),
+    message = function(m) {
+      msgs <<- c(msgs, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )))
+  expect_true(any(grepl("public count 200", msgs)))
+})
+
+# ---- #9: no private boosting with PacGAN -------------------------------------
+
+test_that("#9: dp = TRUE is refused for pac > 1", {
+  x <- sample_toydata(n = 200)
+  g <- gan_trainer(x, epochs = 2, pac = 2, batch_size = 20,
+                   checkpoint_epochs = 1, seed = 1)
+  expect_error(
+    suppressMessages(apply_post_gan_boosting(g, x, n_candidates = 20,
+                                             steps = 2, dp = TRUE)),
+    "not supported with pac = 2"
+  )
+})
+
+# ---- #7: public transformer and GMM hardening --------------------------------
+
+test_that("#7: fit_public builds a transformer without data", {
+  t <- data_transformer$new()
+  t$fit_public(list(
+    age = public_continuous(18, 100),
+    sex = public_categorical(c("F", "M"), class = "factor")
+  ))
+  expect_true(t$public)
+  expect_equal(t$output_dimensions, 3)
+  d <- data.frame(age = c(10, 50, 130), sex = factor(c("M", "F", "M")))
+  td <- t$transform(d)
+  expect_equal(td[, 1], c(-1, (50 - 59) / 41, 1))
+  rt <- t$inverse_transform(td)
+  expect_equal(rt$age, c(18, 50, 100))   # clipped to the public bounds
+  expect_equal(rt$sex, d$sex)
+  expect_error(t$transform(data.frame(age = 30, sex = "X")), "not seen")
+  expect_error(public_continuous(5, 1), "lower < upper")
+  expect_error(t$fit_public(list(age = c(0, 1))), "public_continuous")
+
+  t2 <- data_transformer$new()
+  t2$fit(d, discrete_columns = "sex")
+  expect_false(t2$public)
+})
+
+test_that("#7: decoding a DP model with a data-fitted transformer warns", {
+  X <- matrix(rnorm(400), 200, 2, dimnames = list(NULL, c("a", "b")))
+  tr <- data_transformer$new()
+  tr$fit(X)
+  g <- suppressMessages(dp_gan_trainer(tr$transform(X), sampling_rate = 0.25,
+                                       batch_size = 50, target_epsilon = 5,
+                                       epochs = 1, secure_rng = FALSE,
+                                       verbose = FALSE))
+  expect_message(sample_synthetic_data(g, tr, n_samples = 5), "fit_public")
+
+  tp <- data_transformer$new()
+  tp$fit_public(list(a = public_continuous(-4, 4), b = public_continuous(-4, 4)))
+  msgs <- character(0)
+  withCallingHandlers(sample_synthetic_data(g, tp, n_samples = 5),
+                      message = function(m) {
+                        msgs <<- c(msgs, conditionMessage(m))
+                        invokeRestart("muffleMessage")
+                      })
+  expect_false(any(grepl("fit_public", msgs)))
+})
+
+test_that("#7: a single outlier no longer gets a mode of its own", {
+  set.seed(3)
+  s <- c(rnorm(60, 50000, 8000), 987654.321)
+  tr <- data_transformer$new()
+  tr$fit(matrix(s, ncol = 1), mode_specific = TRUE)
+  m <- tr$meta[[1]]
+  expect_true(all(abs(m$means - 987654.321) > 1e5))
+  expect_true(all(m$stds > 1e-6 * 10))
+  expect_true(all(m$weights * length(s) >= 10))
+})

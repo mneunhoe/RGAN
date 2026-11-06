@@ -48,12 +48,17 @@ from a distribution and returns a torch_tensor. For convenience "normal" and
 torch::nn_module. Default is NULL which will create a simple fully connected network.}
 
 \item{discriminator}{The discriminator network. Expects a neural network provided as
-torch::nn_module. Default is NULL which will create a simple fully connected network.}
+torch::nn_module. Default is NULL which will create a simple fully connected network.
+It must have a sigmoid output and no buffers: DP-SGD privatises parameter
+gradients only, so buffers such as BatchNorm running statistics would be
+updated from raw records outside the guarantee. Use LayerNorm or GroupNorm
+instead of BatchNorm.}
 
 \item{base_lr}{The base learning rate for the optimizers. Default is 0.0001.}
 
 \item{target_epsilon}{Target epsilon for differential privacy. Training will
-stop if this budget is exhausted. Defaults to 1.0.}
+stop before a step that would exceed this budget, and is refused if the
+budget does not cover a single step. Defaults to 1.0.}
 
 \item{target_delta}{Target delta for differential privacy. Defaults to 1e-5.}
 
@@ -82,7 +87,10 @@ actual batch sizes will vary. Defaults to 50.}
 
 \item{plot_dimensions}{Which dimensions to plot. Defaults to c(1, 2).}
 
-\item{track_loss}{Store training losses as output. Defaults to FALSE.}
+\item{track_loss}{Store the generator loss as output. Defaults to FALSE.
+The discriminator loss is not recorded: it is computed on the real
+Poisson batch without noise, so releasing it would fall outside the
+privacy guarantee. \code{losses$d_loss} is therefore \code{NULL}.}
 
 \item{device}{Device for computation ("cpu", "cuda", "mps"). Defaults to "cpu".}
 
@@ -134,6 +142,14 @@ of privacy loss across training steps.
 
 The discriminator is trained with DP-SGD while the generator is trained normally
 (since it only sees synthetic data from the discriminator's gradients).
+
+\strong{What the guarantee covers}: the returned networks, checkpoints and
+generator losses. It does not cover a \code{data_transformer} fitted on the
+raw data, whose statistics (means, standard deviations, category levels,
+mode-specific mixture components) are released with the model when it is
+used to decode samples; fit it on public information or DP statistics for an
+end-to-end guarantee. The number of records is used non-privately (it sets
+the default sampling rate) and can be read off the returned model.
 }
 \examples{
 \dontrun{

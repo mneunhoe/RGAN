@@ -16,7 +16,8 @@ apply_post_gan_boosting(
   averaging_window = NULL,
   score_transform = c("none", "sigmoid"),
   device = NULL,
-  seed = NULL
+  seed = NULL,
+  secure_rng = TRUE
 )
 }
 \arguments{
@@ -50,7 +51,13 @@ has no sigmoid output layer.}
 
 \item{device}{Device for computation. Defaults to trained_gan's device.}
 
-\item{seed}{Optional seed for reproducibility.}
+\item{seed}{Optional seed for reproducibility of the candidate generation.
+With \code{dp = TRUE} and \code{secure_rng = TRUE} the private selection does not
+use R's RNG, so the seed does not make it reproducible.}
+
+\item{secure_rng}{Passed to \code{post_gan_boosting()}: draw the private
+selection from a cryptographically secure source. Only used with
+\code{dp = TRUE}. Defaults to TRUE.}
 }
 \value{
 A list with:
@@ -67,6 +74,15 @@ High-level wrapper that orchestrates the full post-GAN boosting workflow:
 \item Computes discriminator scores using checkpointed discriminators
 \item Applies the post-GAN boosting algorithm to select high-quality samples
 }
+}
+\details{
+With \code{dp = TRUE} the exponential mechanism is calibrated to a sensitivity of
+\code{1 / n_real_units} for the mean real-data score. With \code{pac = 1} (and so for
+every \code{dp_gan_trainer()} model) each record is scored on its own and this
+holds under add/remove-one adjacency, matching DP-SGD training. With
+\code{pac > 1} consecutive records are packed together, and inserting or deleting
+a record shifts every later pack; the bound then holds only under
+replace-one adjacency.
 }
 \examples{
 \dontrun{

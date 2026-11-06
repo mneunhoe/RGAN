@@ -205,8 +205,10 @@ transformer$fit(data)
 # Mode-specific normalization
 transformer$fit(data, mode_specific = TRUE, n_modes = 10)
 
-# With categorical columns
-transformer$fit(data, discrete_columns = c("category"))
+# With categorical columns (by name or by index)
+mixed <- data.frame(x = rnorm(100), category = sample(c("a", "b"), 100, TRUE))
+transformer$fit(mixed, discrete_columns = c("category"))
+transformer$fit(mixed, discrete_columns = 2)
 
 ## ------------------------------------------------
 ## Method `data_transformer$transform`
@@ -366,8 +368,10 @@ transformer$fit(data)
 # Mode-specific normalization
 transformer$fit(data, mode_specific = TRUE, n_modes = 10)
 
-# With categorical columns
-transformer$fit(data, discrete_columns = c("category"))
+# With categorical columns (by name or by index)
+mixed <- data.frame(x = rnorm(100), category = sample(c("a", "b"), 100, TRUE))
+transformer$fit(mixed, discrete_columns = c("category"))
+transformer$fit(mixed, discrete_columns = 2)
 }
 \if{html}{\out{</div>}}
 
@@ -531,7 +535,8 @@ same number of columns as \code{transformer$output_dimensions}.}
 A data.frame with columns in the original format:
 \itemize{
 \item Continuous columns as numeric
-\item Categorical columns as character (or numeric if original levels were numeric)
+\item Categorical columns with the class they had when the transformer was
+fitted (character, factor, numeric, integer or logical)
 }
 }
 \subsection{Examples}{

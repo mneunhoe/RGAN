@@ -11,7 +11,15 @@
 #'     \item \code{path_metadata.rds} - Settings, losses, and metadata
 #'     \item \code{path_g_optim.pt} - Generator optimizer state (if include_optimizers=TRUE
 #'     \item \code{path_d_optim.pt} - Discriminator optimizer state (if include_optimizers=TRUE)
+#'     \item \code{path_checkpoint_d_NNNN.pt}, \code{path_checkpoint_g_NNNN.pt} -
+#'       Discriminator and generator checkpoints held in memory, one pair per
+#'       checkpointed epoch (if the model has checkpoints). Checkpoints that
+#'       were already written to disk during training are referenced by path.
 #'   }
+#'
+#'   The optimizers' classes and hyperparameters are recorded, so that
+#'   \code{load_gan()} rebuilds the optimizers the model was trained with
+#'   (e.g. SGD for \code{dp_gan_trainer()} models) rather than always Adam.
 #'
 #' @param trained_gan A trained GAN object of class "trained_RGAN" returned by \code{\link{gan_trainer}}
 #' @param path The base file path for saving (without extension). Files will be created with suffixes.
@@ -53,11 +61,48 @@ save_gan <- function(trained_gan, path, include_optimizers = TRUE) {
     torch::torch_save(trained_gan$discriminator_optimizer$state_dict(), paste0(path, "_d_optim.pt"))
   }
 
+  # Save checkpoints. In-memory state dicts are written one file each;
+  # on-disk checkpoints are referenced by their absolute paths.
+  checkpoints_meta <- NULL
+  ck <- trained_gan$checkpoints
+  if (!is.null(ck) && length(ck$epochs) > 0) {
+    if (isTRUE(ck$on_disk)) {
+      checkpoints_meta <- list(
+        epochs = ck$epochs,
+        discriminators = lapply(ck$discriminators, normalizePath, mustWork = FALSE),
+        generators = lapply(ck$generators, normalizePath, mustWork = FALSE),
+        on_disk = TRUE
+      )
+    } else {
+      d_files <- character(0)
+      g_files <- character(0)
+      for (j in seq_along(ck$epochs)) {
+        d_file <- sprintf("_checkpoint_d_%04d.pt", ck$epochs[j])
+        g_file <- sprintf("_checkpoint_g_%04d.pt", ck$epochs[j])
+        torch::torch_save(ck$discriminators[[j]], paste0(path, d_file))
+        torch::torch_save(ck$generators[[j]], paste0(path, g_file))
+        d_files <- c(d_files, d_file)
+        g_files <- c(g_files, g_file)
+      }
+      # Stored relative to the base path so the files can be moved together.
+      checkpoints_meta <- list(
+        epochs = ck$epochs,
+        discriminator_files = d_files,
+        generator_files = g_files,
+        on_disk = FALSE
+      )
+    }
+  }
+
   # Save R metadata (settings, losses, etc.) separately
   metadata <- list(
     settings = trained_gan$settings,
     losses = trained_gan$losses,
     validation_metrics = trained_gan$validation_metrics,
+    privacy = trained_gan$privacy,
+    checkpoints = checkpoints_meta,
+    generator_optimizer = optimizer_spec(trained_gan$generator_optimizer),
+    discriminator_optimizer = optimizer_spec(trained_gan$discriminator_optimizer),
     rgan_version = as.character(utils::packageVersion("RGAN")),
     torch_version = as.character(utils::packageVersion("torch")),
     saved_at = Sys.time(),
@@ -136,9 +181,13 @@ load_gan <- function(path, device = "cpu") {
   metadata <- readRDS(metadata_path)
   settings <- metadata$settings
 
-  # Reconstruct optimizers
-  g_optim <- torch::optim_adam(g_net$parameters, lr = settings$base_lr)
-  d_optim <- torch::optim_adam(d_net$parameters, lr = settings$base_lr * settings$ttur_factor)
+  # Reconstruct optimizers with the class and hyperparameters they were saved
+  # with. Models saved before these were recorded fall back to Adam.
+  ttur <- if (is.null(settings$ttur_factor)) 1 else settings$ttur_factor
+  g_optim <- rebuild_optimizer(metadata$generator_optimizer, g_net$parameters,
+                               fallback_lr = settings$base_lr)
+  d_optim <- rebuild_optimizer(metadata$discriminator_optimizer, d_net$parameters,
+                               fallback_lr = settings$base_lr * ttur)
 
   # Load optimizer states if available
   g_optim_path <- paste0(path, "_g_optim.pt")
@@ -152,6 +201,29 @@ load_gan <- function(path, device = "cpu") {
   # Update device in settings
   settings$device <- device
 
+  # Restore checkpoints
+  checkpoints <- NULL
+  ck <- metadata$checkpoints
+  if (!is.null(ck)) {
+    if (isTRUE(ck$on_disk)) {
+      missing <- !file.exists(unlist(c(ck$discriminators, ck$generators)))
+      if (any(missing)) {
+        warning("Some on-disk checkpoint files referenced by this model no ",
+                "longer exist; post-GAN boosting will fail until they are restored.")
+      }
+      checkpoints <- ck
+    } else {
+      checkpoints <- list(
+        epochs = ck$epochs,
+        discriminators = lapply(ck$discriminator_files, function(f)
+          lapply(torch::torch_load(paste0(path, f)), function(t) t$to(device = device))),
+        generators = lapply(ck$generator_files, function(f)
+          lapply(torch::torch_load(paste0(path, f)), function(t) t$to(device = device))),
+        on_disk = FALSE
+      )
+    }
+  }
+
   # Reconstruct the trained_RGAN object
   output <- list(
     generator = g_net,
@@ -160,8 +232,12 @@ load_gan <- function(path, device = "cpu") {
     discriminator_optimizer = d_optim,
     losses = metadata$losses,
     validation_metrics = metadata$validation_metrics,
+    checkpoints = checkpoints,
     settings = settings
   )
+  if (!is.null(metadata$privacy)) {
+    output$privacy <- metadata$privacy
+  }
   class(output) <- "trained_RGAN"
 
   message(sprintf(
@@ -171,4 +247,42 @@ load_gan <- function(path, device = "cpu") {
   ))
 
   return(output)
+}
+
+
+#' @title Record an Optimizer's Class and Hyperparameters
+#' @param optim A torch optimizer.
+#' @return A list with the optimizer's class name and the hyperparameters of
+#'   its first parameter group.
+#' @keywords internal
+optimizer_spec <- function(optim) {
+  if (is.null(optim)) return(NULL)
+  hyper <- optim$param_groups[[1]]
+  hyper$params <- NULL
+  hyper$initial_lr <- NULL
+  list(class = class(optim)[1], hyper = hyper)
+}
+
+#' @title Rebuild an Optimizer from its Recorded Specification
+#' @param spec The output of `optimizer_spec()`, or NULL.
+#' @param params The parameters to optimise.
+#' @param fallback_lr Learning rate for the Adam fallback used when no
+#'   specification was recorded.
+#' @return A torch optimizer.
+#' @keywords internal
+rebuild_optimizer <- function(spec, params, fallback_lr) {
+  if (is.null(spec)) {
+    return(torch::optim_adam(params, lr = fallback_lr))
+  }
+  ns <- asNamespace("torch")
+  if (!exists(spec$class, envir = ns, inherits = FALSE)) {
+    warning(sprintf(
+      "Optimizer class '%s' is not a torch optimizer; rebuilding as Adam. Pass your own optimizer to continue training.",
+      spec$class
+    ))
+    return(torch::optim_adam(params, lr = fallback_lr))
+  }
+  ctor <- get(spec$class, envir = ns)
+  args <- spec$hyper[intersect(names(spec$hyper), names(formals(ctor)))]
+  do.call(ctor, c(list(params), args))
 }

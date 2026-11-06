@@ -15,7 +15,8 @@ post_gan_boosting(
   dp = FALSE,
   MW_epsilon = 0.1,
   weighted_average = FALSE,
-  averaging_window = NULL
+  averaging_window = NULL,
+  secure_rng = TRUE
 )
 }
 \arguments{
@@ -54,6 +55,15 @@ the \code{steps} rounds spends \code{MW_epsilon} in total. Defaults to 0.1.}
 Defaults to FALSE.}
 
 \item{averaging_window}{Number of final steps to average over. Defaults to NULL (all steps).}
+
+\item{secure_rng}{Only used when \code{dp = TRUE}. Draw the randomness of the
+exponential-mechanism selection from OpenDP's cryptographically secure
+generator, as \code{dp_gan_trainer(secure_rng = TRUE)} does for training.
+Defaults to TRUE. With FALSE the selection uses R's Mersenne Twister, which
+is predictable: anyone who knows or guesses the seed can recompute every
+selection, so use FALSE for testing only. The weights are still computed
+in floating point, with the usual caveats for the exponential mechanism
+(Ilvento, 2020).}
 }
 \value{
 A list with:

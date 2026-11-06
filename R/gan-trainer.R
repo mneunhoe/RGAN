@@ -6,6 +6,7 @@
 #' @param noise_dim The dimensions of the GAN noise vector z. Defaults to 2.
 #' @param noise_distribution The noise distribution. Expects a function that samples from a distribution and returns a torch_tensor. For convenience "normal" and "uniform" will automatically set a function. Defaults to "normal".
 #' @param value_function The value function for GAN training. Expects a function that takes discriminator scores of real and fake data as input and returns a list with the discriminator loss and generator loss. For convenience four loss functions "original", "wasserstein", "wgan-gp", and "f-wgan" are already implemented. Defaults to "original".
+#'   A function identical to a built-in (e.g. `WGAN_value_fct`) is treated as that built-in. Any other function gets a default discriminator without a sigmoid output layer and no weight clipping unless `weight_clipper` is supplied.
 #' @param gp_lambda The gradient penalty coefficient for WGAN-GP training. Only used when value_function is "wgan-gp". Defaults to 10.
 #' @param data_type "tabular" or "image", controls the data type, defaults to "tabular".
 #' @param generator The generator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.
@@ -14,7 +15,7 @@
 #' @param discriminator_optimizer The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr * ttur_factor)`.
 #' @param base_lr The base learning rate for the optimizers. Default is 0.0001. Only used if no optimizer is explicitly passed to the trainer.
 #' @param ttur_factor A multiplier for the learning rate of the discriminator, to implement the two time scale update rule.
-#' @param weight_clipper The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training.
+#' @param weight_clipper The wasserstein GAN puts some constraints on the weights of the discriminator, therefore weights are clipped during training. A function of the discriminator, applied after every discriminator update. Defaults to NULL, which uses `WGAN_weight_clipper` for "wasserstein" and no clipping otherwise.
 #' @param batch_size The number of training samples selected into the mini batch for training. Defaults to 50.
 #' @param epochs The number of training epochs. Defaults to 150.
 #' @param plot_progress Monitor training progress with plots. Defaults to FALSE.
@@ -27,11 +28,11 @@
 #' @param device Input on which device (e.g. "cpu", "cuda", or "mps") training should be done. Defaults to "cpu".
 #' @param seed Optional seed for reproducibility. Sets both R's random seed and torch's random seed. Defaults to NULL (no seed).
 #' @param validation_data Optional validation data for monitoring training. Should be in the same format as training data.
-#' @param early_stopping Enable early stopping based on validation metrics. Defaults to FALSE.
+#' @param early_stopping Enable early stopping based on validation metrics. Defaults to FALSE. Requires `validation_data`, or `track_loss = TRUE` to monitor the discriminator loss instead. The best weights seen are restored when training stops early.
 #' @param patience Number of epochs without improvement before stopping. Only used if early_stopping is TRUE. Defaults to 10.
 #' @param lr_schedule Learning rate schedule type. One of "constant" (default), "step", "exponential", or "cosine".
 #'   "step" reduces LR by lr_decay_factor every lr_decay_steps epochs.
-#'   "exponential" applies lr_decay_factor decay each epoch.
+#'   "exponential" applies lr_decay_factor decay each epoch (epoch e + 1 trains at base_lr * lr_decay_factor^e).
 #'   "cosine" uses cosine annealing from base_lr to 0 over all epochs.
 #' @param lr_decay_factor Multiplicative factor for learning rate decay. Used with "step" and "exponential" schedules. Defaults to 0.1.
 #' @param lr_decay_steps Number of epochs between learning rate reductions for "step" schedule. Defaults to 50.
@@ -168,6 +169,38 @@ gan_trainer <-
     if (gumbel_tau <= 0) {
       stop("gumbel_tau must be a positive number")
     }
+
+    # Resolve the value function. A string selects a built-in; a function is
+    # used as is. `vf_name` is the string that drives the rest of the trainer
+    # (discriminator output layer, gradient penalty, validation thresholds);
+    # it is "custom" for a user-supplied function that is not a built-in.
+    if (is.null(value_function)) value_function <- "original"
+    if (is.function(value_function)) {
+      vf_name <- builtin_value_function_name(value_function)
+    } else if (is.character(value_function) && length(value_function) == 1) {
+      valid_value_functions <- c("original", "wasserstein", "wgan-gp", "f-wgan")
+      if (!value_function %in% valid_value_functions) {
+        stop(sprintf(
+          "value_function must be a function or one of: %s",
+          paste(valid_value_functions, collapse = ", ")
+        ))
+      }
+      vf_name <- value_function
+    } else {
+      stop("value_function must be a function or a single character string")
+    }
+
+    # Early stopping needs a metric. Without validation data the trainer falls
+    # back to the variance of the tracked discriminator loss, which requires
+    # track_loss = TRUE; without either, every epoch would score Inf and
+    # training would always stop at epoch `patience`.
+    if (early_stopping && is.null(validation_data) && !track_loss) {
+      stop(paste0(
+        "early_stopping = TRUE needs a metric to monitor: supply ",
+        "validation_data, or set track_loss = TRUE to monitor the ",
+        "discriminator loss."
+      ))
+    }
     # Validate output_info structure if provided
     if (!is.null(output_info)) {
       if (!is.list(output_info)) {
@@ -207,10 +240,6 @@ gan_trainer <-
     }
 
 # Check if data is in the correct format ---------------------------------------
-    !(any(
-      c("dataset", "matrix", "array", "torch_tensor") %in% class(data)
-    ))
-
     if (!(any(
       c("dataset", "matrix", "array", "torch_tensor") %in% class(data)
     ))) {
@@ -233,7 +262,14 @@ gan_trainer <-
         stop("data cannot be all NA values")
       }
 
-      data <- torch::torch_tensor(data)$to(device = "cpu")
+      data <- torch::torch_tensor(data)
+    }
+
+    if (inherits(data, "torch_tensor")) {
+      data <- data$to(device = "cpu")
+      if (data$dim() < 2 || nrow(data) == 0) {
+        stop("data must be a tensor with at least one row and one column")
+      }
       data_dim <- ncol(data)
       steps <- nrow(data) %/% batch_size
 
@@ -262,12 +298,19 @@ gan_trainer <-
 
     if("image_folder" %in% class(data)) {
       steps <- length(data$imgs[[1]]) %/% batch_size
+    } else if (inherits(data, "dataset")) {
+      steps <- length(data) %/% batch_size
+    }
+    if (inherits(data, "dataset") && steps < 1) {
+      steps <- 1
     }
 
 # Prepare validation data if provided ------------------------------------------
     if (!is.null(validation_data)) {
       if ((any(c("array", "matrix") %in% class(validation_data)))) {
         validation_data <- torch::torch_tensor(validation_data)$to(device = "cpu")
+      } else if (inherits(validation_data, "torch_tensor")) {
+        validation_data <- validation_data$to(device = "cpu")
       }
     }
 
@@ -329,7 +372,7 @@ gan_trainer <-
     if (is.null(discriminator)) {
       # For PacGAN, discriminator input is data_dim * pac (packed samples)
       d_input_dim <- data_dim * pac
-      if(value_function != "original") {
+      if(vf_name != "original") {
       d_net <-
         Discriminator(data_dim = d_input_dim, dropout_rate = 0.5)$to(device = device)
       } else {
@@ -364,47 +407,27 @@ gan_trainer <-
     }
 
 # Define the value function ----------------------------------------------------
-    if (inherits(value_function, "function")) {
+    # The no-op clipper is a package-level function: an anonymous function
+    # defined here would capture this frame -- including `data` and
+    # `validation_data` -- and be returned in `settings`.
+    if (is.function(value_function)) {
       value_fct <- value_function
+      if (is.null(weight_clipper)) {
+        weight_clipper <- if (vf_name == "wasserstein") WGAN_weight_clipper else no_weight_clipper
+      }
     } else {
-      if (is.null(value_function) | value_function == "original") {
-        value_fct <- GAN_value_fct
-
-        weight_clipper <- function(d_net) {
-
-        }
+      value_fct <- switch(
+        vf_name,
+        "original" = GAN_value_fct,
+        "wasserstein" = WGAN_value_fct,
+        "wgan-gp" = WGAN_value_fct,
+        "f-wgan" = KLWGAN_value_fct
+      )
+      if (is.null(weight_clipper)) {
+        # Only plain WGAN clips; WGAN-GP uses the gradient penalty instead.
+        weight_clipper <- if (vf_name == "wasserstein") WGAN_weight_clipper else no_weight_clipper
       }
-
-      if (value_function == "wasserstein") {
-        value_fct <- WGAN_value_fct
-
-        weight_clipper <- WGAN_weight_clipper
-
-      }
-      if (value_function == "wgan-gp") {
-        value_fct <- WGAN_value_fct
-
-        # No weight clipping needed for WGAN-GP
-        weight_clipper <- function(d_net) {
-
-        }
-
-      }
-      if (value_function == "f-wgan") {
-        value_fct <- KLWGAN_value_fct
-
-        weight_clipper <- function(d_net) {
-
-        }
-
-      }
-
-
     }
-
-
-
-
 
 # Sample a fixed noise vector to observe training progress ---------------------
     fixed_z <-
@@ -432,7 +455,7 @@ gan_trainer <-
         d_optim,
         value_fct,
         weight_clipper,
-        gp_lambda = if (value_function == "wgan-gp") gp_lambda else 0,
+        gp_lambda = if (vf_name == "wgan-gp") gp_lambda else 0,
         track_loss,
         pac
       )
@@ -510,7 +533,7 @@ gan_trainer <-
               val_fake_scores <- torch::with_no_grad(d_net(val_synth_packed))
 
               # Discriminator accuracy: real should be high, fake should be low
-              if (value_function == "original") {
+              if (vf_name == "original") {
                 d_acc_real <- (val_real_scores > 0.5)$float()$mean()$item()
                 d_acc_fake <- (val_fake_scores < 0.5)$float()$mean()$item()
               } else {
@@ -555,8 +578,10 @@ gan_trainer <-
                 best_val_metric <- val_metric
                 epochs_without_improvement <- 0
                 # Save best model state
-                best_generator_state <- g_net$state_dict()
-                best_discriminator_state <- d_net$state_dict()
+                # state_dict() tensors share storage with the live
+                # parameters, so clone them or they keep training.
+                best_generator_state <- lapply(g_net$state_dict(), function(x) x$clone())
+                best_discriminator_state <- lapply(d_net$state_dict(), function(x) x$clone())
               } else {
                 epochs_without_improvement <- epochs_without_improvement + 1
               }
@@ -731,8 +756,6 @@ gan_update_step <-
       d_loss <- d_loss + gp_lambda * gp
     }
 
-    # Clip weights according to weight_clipper ---------------------------------
-    weight_clipper(d_net)
     # What follows is one update step for the discriminator net-----------------
     # First set all previous gradients to zero
     d_optim$zero_grad()
@@ -742,6 +765,11 @@ gan_update_step <-
 
     # Take one step of the optimizer
     d_optim$step()
+
+    # Clip weights according to weight_clipper ---------------------------------
+    # Clipping after the update (Arjovsky et al., 2017) keeps the critic used
+    # by the generator step, and the one returned, inside the clip bound.
+    weight_clipper(d_net)
 
     # Update the generator -----------------------------------------------------
     # Get a fresh noise sample -------------------------------------------------
@@ -964,8 +992,9 @@ adjust_learning_rate <- function(optimizer,
       initial_lr * (lr_decay_factor ^ num_decays)
     },
     "exponential" = {
-      # Exponential decay each epoch
-      initial_lr * (lr_decay_factor ^ (current_epoch - 1))
+      # Called at the end of `current_epoch` to set the LR for the next
+      # epoch, which has had `current_epoch` decays.
+      initial_lr * (lr_decay_factor ^ current_epoch)
     },
     "cosine" = {
       # Cosine annealing from initial_lr to 0
@@ -981,4 +1010,34 @@ adjust_learning_rate <- function(optimizer,
   }
 
   invisible(new_lr)
+}
+
+
+#' @title No-op Weight Clipper
+#'
+#' @description The weight clipper used by value functions that do not clip
+#'   the discriminator weights. Defined at package level so that the function
+#'   stored in a trained model's `settings` does not carry the trainer's
+#'   environment (and with it the training data).
+#'
+#' @param d_net A torch::nn_module. Left unchanged.
+#' @return NULL, invisibly.
+#' @keywords internal
+no_weight_clipper <- function(d_net) {
+  invisible(NULL)
+}
+
+#' @title Name of a Built-in Value Function
+#'
+#' @description Maps a value function passed as a function back to the name
+#'   of the built-in it is identical to, or "custom".
+#'
+#' @param value_function A function.
+#' @return One of "original", "wasserstein", "f-wgan" or "custom".
+#' @keywords internal
+builtin_value_function_name <- function(value_function) {
+  if (identical(value_function, GAN_value_fct)) return("original")
+  if (identical(value_function, WGAN_value_fct)) return("wasserstein")
+  if (identical(value_function, KLWGAN_value_fct)) return("f-wgan")
+  "custom"
 }

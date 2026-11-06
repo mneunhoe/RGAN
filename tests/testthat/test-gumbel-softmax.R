@@ -116,7 +116,7 @@ test_that("TabularGenerator applies correct activations", {
   skip_if_not_installed("torch")
 
   output_info <- list(
-    list(1, "linear"),      # continuous: tanh
+    list(1, "linear"),      # continuous: identity
     list(3, "softmax")      # categorical: gumbel-softmax
   )
 
@@ -132,9 +132,11 @@ test_that("TabularGenerator applies correct activations", {
 
   output_array <- torch::as_array(output)
 
-  # First column (linear/tanh) should be in [-1, 1]
-  expect_true(all(output_array[, 1] >= -1))
-  expect_true(all(output_array[, 1] <= 1))
+  # First column (linear) is an identity output, so it is not capped at
+  # +/- 1: scaling the output layer must move it beyond that range.
+  torch::with_no_grad(gen$output_layer$weight$mul_(100))
+  wide <- torch::as_array(gen(z, hard = FALSE))
+  expect_true(max(abs(wide[, 1])) > 1)
 
   # Columns 2-4 (softmax) should sum to 1 for each row
   softmax_sums <- rowSums(output_array[, 2:4])

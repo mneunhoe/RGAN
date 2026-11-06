@@ -3,23 +3,29 @@
 #' @description Implements the original GAN value function as a function to be called in gan_trainer.
 #'   The function can serve as a template to implement new value functions in RGAN.
 #'
+#'   The generator loss is the non-saturating `-log D(G(z))` recommended by
+#'   Goodfellow et al. (2014), not the minimax `log(1 - D(G(z)))`, whose
+#'   gradient vanishes when the discriminator confidently rejects fakes --
+#'   which is exactly the situation early in training.
+#'
 #' @param real_scores The discriminator scores on real examples ($D(x)$)
 #' @param fake_scores The discriminator scores on fake examples ($D(G(z))$)
 #' @param epsilon Small constant for numerical stability to avoid log(0). Defaults to 1e-7.
+#'   It is added inside the logarithm rather than used to clamp the scores, so
+#'   the loss keeps a non-zero gradient for scores at or beyond the boundary.
 #'
 #' @return The function returns a named list with the entries d_loss and g_loss
 #' @export
 GAN_value_fct <- function(real_scores, fake_scores, epsilon = 1e-7) {
-  # Clamp scores to avoid log(0) and log(1) numerical instability
-  real_scores <- torch::torch_clamp(real_scores, epsilon, 1 - epsilon)
-  fake_scores <- torch::torch_clamp(fake_scores, epsilon, 1 - epsilon)
-
+  # Offset, rather than clamp, inside the logarithms: a clamp has zero gradient
+  # outside its range, so a saturated score would stop learning altogether.
   d_loss <-
-    torch::torch_log(real_scores) + torch::torch_log(1 - fake_scores)
+    torch::torch_log(real_scores + epsilon) +
+    torch::torch_log(1 - fake_scores + epsilon)
   d_loss <- -d_loss$mean()
 
-
-  g_loss <- torch::torch_log(1 - fake_scores)
+  # Non-saturating generator loss.
+  g_loss <- -torch::torch_log(fake_scores + epsilon)
 
   g_loss <- g_loss$mean()
 
@@ -112,9 +118,10 @@ WGAN_weight_clipper <- function(d_net, clip_values = c(-0.01, 0.01)) {
 gradient_penalty <- function(d_net, real_data, fake_data, device = "cpu") {
   batch_size <- real_data$shape[1]
 
-
-  # Sample random interpolation coefficients
-  alpha <- torch::torch_rand(batch_size, 1, device = device)
+  # Sample one interpolation coefficient per example, shaped (B, 1, ..., 1) so
+  # that it broadcasts over tabular (B, D) and image (B, C, H, W) input alike.
+  alpha <- torch::torch_rand(c(batch_size, rep(1L, real_data$dim() - 1L)),
+                             device = device)
 
   # Create interpolated samples between real and fake data
   interpolates <- (alpha * real_data + (1 - alpha) * fake_data)$requires_grad_(TRUE)
@@ -132,7 +139,8 @@ gradient_penalty <- function(d_net, real_data, fake_data, device = "cpu") {
   )[[1]]
 
   # Compute gradient norm
-  gradients <- gradients$view(c(batch_size, -1))
+  # Norm of each example's flattened gradient
+  gradients <- gradients$reshape(c(batch_size, -1))
   gradient_norm <- gradients$norm(2, dim = 2)
 
   # Compute penalty: (||grad|| - 1)^2

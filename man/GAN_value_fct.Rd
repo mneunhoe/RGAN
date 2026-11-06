@@ -11,7 +11,9 @@ GAN_value_fct(real_scores, fake_scores, epsilon = 1e-07)
 
 \item{fake_scores}{The discriminator scores on fake examples ($D(G(z))$)}
 
-\item{epsilon}{Small constant for numerical stability to avoid log(0). Defaults to 1e-7.}
+\item{epsilon}{Small constant for numerical stability to avoid log(0). Defaults to 1e-7.
+It is added inside the logarithm rather than used to clamp the scores, so
+the loss keeps a non-zero gradient for scores at or beyond the boundary.}
 }
 \value{
 The function returns a named list with the entries d_loss and g_loss
@@ -19,4 +21,9 @@ The function returns a named list with the entries d_loss and g_loss
 \description{
 Implements the original GAN value function as a function to be called in gan_trainer.
 The function can serve as a template to implement new value functions in RGAN.
+
+The generator loss is the non-saturating \verb{-log D(G(z))} recommended by
+Goodfellow et al. (2014), not the minimax \code{log(1 - D(G(z)))}, whose
+gradient vanishes when the discriminator confidently rejects fakes --
+which is exactly the situation early in training.
 }

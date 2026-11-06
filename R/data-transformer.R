@@ -243,13 +243,19 @@ data_transformer <- R6::R6Class(
     #' @param data Column data as a single-column matrix
     fit_discrete = function(column = NULL, data = NULL) {
       column <- column
-      data <- factor(data[, 1])
+      values <- if (is.data.frame(data)) data[[1]] else data[, 1]
+      # Remember the column's class so inverse_transform() can restore it
+      # exactly; guessing from the level strings turns codes such as "01"
+      # into the number 1.
+      original_class <- class(values)[1]
+      data <- factor(values)
       levs <- levels(data)
       categories <- length(levs)
 
       return(list(
         name = column,
         levs = levs,
+        original_class = original_class,
         output_info = list(categories, "softmax"),
         output_dimensions = categories
       ))
@@ -288,8 +294,10 @@ data_transformer <- R6::R6Class(
     #' # Mode-specific normalization
     #' transformer$fit(data, mode_specific = TRUE, n_modes = 10)
     #'
-    #' # With categorical columns
-    #' transformer$fit(data, discrete_columns = c("category"))
+    #' # With categorical columns (by name or by index)
+    #' mixed <- data.frame(x = rnorm(100), category = sample(c("a", "b"), 100, TRUE))
+    #' transformer$fit(mixed, discrete_columns = c("category"))
+    #' transformer$fit(mixed, discrete_columns = 2)
     fit = function(data, discrete_columns = NULL, mode_specific = FALSE, n_modes = 10) {
       self$output_info <- list()
       self$output_dimensions <- 0
@@ -302,6 +310,32 @@ data_transformer <- R6::R6Class(
         col_ids <- 1:ncol(data)
       } else {
         col_ids <- colnames(data)
+      }
+
+      # discrete_columns may be given as names or as column indices. Indices
+      # are mapped to names when the data has names; matching them against
+      # the names directly would silently treat every column as continuous.
+      if (!is.null(discrete_columns)) {
+        if (is.numeric(discrete_columns)) {
+          bad <- discrete_columns[discrete_columns < 1 |
+                                    discrete_columns > ncol(data) |
+                                    discrete_columns != round(discrete_columns)]
+          if (length(bad) > 0) {
+            stop(sprintf(
+              "discrete_columns indices out of range (data has %d columns): %s",
+              ncol(data), paste(bad, collapse = ", ")
+            ), call. = FALSE)
+          }
+          discrete_columns <- col_ids[discrete_columns]
+        } else {
+          unknown <- setdiff(discrete_columns, col_ids)
+          if (length(unknown) > 0) {
+            stop(sprintf(
+              "discrete_columns not found in the data: %s",
+              paste(unknown, collapse = ", ")
+            ), call. = FALSE)
+          }
+        }
       }
 
       for (column in col_ids) {
@@ -375,6 +409,14 @@ data_transformer <- R6::R6Class(
     #' @param column_meta Metadata for this column from fit_discrete
     #' @param data Vector of values to transform
     transform_discrete = function(column_meta, data) {
+      if (is.factor(data)) data <- as.character(data)
+      unseen <- setdiff(unique(as.character(data[!is.na(data)])), column_meta$levs)
+      if (length(unseen) > 0) {
+        stop(sprintf(
+          "Column '%s' contains levels not seen in fit(): %s. Refit the transformer on data that includes them.",
+          column_meta$name, paste(utils::head(unseen, 10), collapse = ", ")
+        ), call. = FALSE)
+      }
       oh <- model.matrix( ~ 0 + factor(data, levels = column_meta$levs))
       colnames(oh) <- column_meta$levs
       oh_na <- array(NA, dim = c(length(data), ncol(oh)))
@@ -489,13 +531,27 @@ data_transformer <- R6::R6Class(
       # Map indices to category levels
       column <- levs[max_index]
 
-      # Try to convert to numeric if the levels are numeric
-      # Otherwise keep as character
-      numeric_levs <- suppressWarnings(as.numeric(levs))
-      if (!any(is.na(numeric_levs))) {
-        # All levels are numeric, convert result to numeric
-        column <- as.numeric(column)
+      # Restore the class the column had at fit() time.
+      original_class <- meta$original_class
+      if (is.null(original_class)) {
+        # Transformers fitted before original_class was recorded: keep the
+        # old behaviour of converting all-numeric levels to numbers.
+        numeric_levs <- suppressWarnings(as.numeric(levs))
+        if (!any(is.na(numeric_levs))) {
+          column <- as.numeric(column)
+        }
+        return(column)
       }
+
+      column <- switch(
+        original_class,
+        "numeric" = as.numeric(column),
+        "integer" = as.integer(column),
+        "logical" = as.logical(column),
+        "factor" = factor(column, levels = levs),
+        "ordered" = factor(column, levels = levs, ordered = TRUE),
+        column
+      )
 
       return(column)
     },
@@ -515,7 +571,8 @@ data_transformer <- R6::R6Class(
     #'
     #' @return A data.frame with columns in the original format:
     #'   - Continuous columns as numeric
-    #'   - Categorical columns as character (or numeric if original levels were numeric)
+    #'   - Categorical columns with the class they had when the transformer was
+    #'     fitted (character, factor, numeric, integer or logical)
     #'
     #' @examples
     #' data <- sample_toydata()

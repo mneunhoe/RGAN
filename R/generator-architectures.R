@@ -562,8 +562,9 @@ TabularGenerator <- torch::nn_module(
         use_hard <- if (!is.null(hard)) hard else !self$training
         col_data <- gumbel_softmax(col_data, tau = self$tau, hard = use_hard, dim = 2)
       } else if (col_type == "linear") {
-        # For standard continuous columns, apply tanh to bound output
-        col_data <- torch::torch_tanh(col_data)
+        # Standard continuous columns are z-scored by data_transformer, so
+        # they are unbounded: use an identity output. A tanh here would cap
+        # every generated value at +/- 1 standard deviation.
       } else if (col_type == "mode_specific") {
         # For mode-specific: first n-1 columns are mode indicators (softmax),
         # last column is normalized value (tanh)

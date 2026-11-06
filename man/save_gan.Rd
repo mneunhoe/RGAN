@@ -28,7 +28,15 @@ The function creates multiple files with the given path as base name:
 \item \code{path_metadata.rds} - Settings, losses, and metadata
 \item \code{path_g_optim.pt} - Generator optimizer state (if include_optimizers=TRUE
 \item \code{path_d_optim.pt} - Discriminator optimizer state (if include_optimizers=TRUE)
+\item \code{path_checkpoint_d_NNNN.pt}, \code{path_checkpoint_g_NNNN.pt} -
+Discriminator and generator checkpoints held in memory, one pair per
+checkpointed epoch (if the model has checkpoints). Checkpoints that
+were already written to disk during training are referenced by path.
 }
+
+The optimizers' classes and hyperparameters are recorded, so that
+\code{load_gan()} rebuilds the optimizers the model was trained with
+(e.g. SGD for \code{dp_gan_trainer()} models) rather than always Adam.
 }
 \examples{
 \dontrun{

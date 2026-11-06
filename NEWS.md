@@ -1,4 +1,4 @@
-# RGAN 0.3.0 (development)
+# RGAN 0.3.0
 
 Fixes for the defects reported in GitHub issues #3-#27.
 

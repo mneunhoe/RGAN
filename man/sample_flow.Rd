@@ -27,8 +27,8 @@ supplied.}
 
 \item{z}{Optional starting noise: a torch tensor or numeric matrix of shape
 \verb{(n_samples, data_dim)}. Supplying \code{z} makes the map deterministic, which
-is what pairs \eqn{(z, \hat{x})} for Diffusion2GAN-style distillation
-require (see \code{\link[=flow_pairs]{flow_pairs()}}).}
+is what noise-to-sample pairs \eqn{(z, \hat{x})} require (see
+\code{\link[=flow_pairs]{flow_pairs()}}).}
 
 \item{return_trajectory}{Logical. If \code{TRUE}, also return the state after
 every step.}

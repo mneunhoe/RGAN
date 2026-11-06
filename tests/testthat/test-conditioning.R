@@ -440,32 +440,6 @@ test_that("gan_trainer trains on a mixed data set for both conditioning types", 
   }
 })
 
-test_that("conditioning works with TokenGenerator and TokenDiscriminator", {
-  fx <- mixed_transformer(n = 200)
-  meta <- build_conditioning_meta(fx$output_info, fx$transformed)
-  cond_dim <- meta$n_blocks + meta$data_dim
-  pac <- 5
-
-  g_net <- TokenGenerator(noise_dim = 4, output_info = fx$output_info,
-                          d_model = 16, n_heads = 2, n_layers = 1,
-                          cond_dim = cond_dim)
-  d_net <- TokenDiscriminator(output_info = fx$output_info, d_model = 16,
-                              n_heads = 2, n_layers = 1, pac = pac,
-                              extra_inputs = cond_dim)
-  expect_equal(d_net$extra_inputs, cond_dim)
-  expect_equal(d_net$sample_dim, meta$data_dim + cond_dim)
-
-  g <- gan_trainer(fx$transformed, epochs = 2, batch_size = 50, noise_dim = 4,
-                   pac = pac, seed = 42, track_loss = TRUE,
-                   output_info = fx$output_info,
-                   generator = g_net, discriminator = d_net,
-                   value_function = "rpgan",
-                   regularization = list(type = "r1r2", gamma = 10),
-                   conditioning = list(type = "random_mask"))
-  expect_s3_class(g, "trained_RGAN")
-  expect_true(all(is.finite(g$losses$g_loss)))
-})
-
 test_that("conditioning errors without output_info", {
   fx <- mixed_transformer(n = 100)
   expect_error(

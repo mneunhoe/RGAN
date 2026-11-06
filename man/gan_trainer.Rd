@@ -16,7 +16,6 @@ gan_trainer(
   instance_noise = NULL,
   augmentation = NULL,
   conditioning = NULL,
-  distillation = NULL,
   data_type = "tabular",
   generator = NULL,
   generator_optimizer = NULL,
@@ -200,50 +199,7 @@ and \code{"cossin"} blocks, averaged over the observed cells. Default 1.}
 }
 A custom \code{generator} must accept the concatenated
 \code{noise_dim + n_blocks + data_dim} input, and a custom \code{discriminator} the
-\code{pac * (data_dim + n_blocks + data_dim)} input (for a
-\code{\link[=TokenDiscriminator]{TokenDiscriminator()}} set \code{extra_inputs = n_blocks + data_dim}).}
-
-\item{distillation}{Optional Diffusion2GAN-style pair-regression distillation from a
-flow-matching teacher, given as a list. Defaults to NULL (no distillation; the training
-path is then bit-identical to the previous behaviour). This is Experiment 6 of the 2026
-experiment plan (report item L5), the recipe of Kang et al. (ECCV 2024, arXiv:2405.05967).
-
-The teacher's ODE is a deterministic map from noise \code{z} to a sample \code{x_hat}. Every
-generator step draws a minibatch of those pairs and adds
-\code{lambda * weighted_mean_loss(G(z_i), x_hat_i)} to the generator loss. The adversarial part
-is untouched: it still uses a \emph{fresh} noise draw and the real data batch, so the
-discriminator never sees the teacher's output as "real". The pairs only pull the
-generator's noise-to-data map towards the teacher's, which is what lets a one-step
-student inherit the teacher's coverage.
-
-Fields (with defaults):
-\describe{
-\item{\code{pairs}}{A list \code{list(z = matrix, x = matrix)} from \code{\link[=flow_pairs]{flow_pairs()}}. If NULL the
-pairs are generated from \code{teacher}.}
-\item{\code{teacher}}{A trained teacher of class \code{"trained_RFlow"}. Used to generate \code{pairs}
-when they are not supplied, and to refresh them when \code{refresh_every} is set. A bare
-\code{"trained_RFlow"} object passed as \code{distillation} is shorthand for
-\verb{list(teacher = <that object>)}.}
-\item{\code{n_pairs}}{Number of pairs to generate from \code{teacher}. Default \code{4 * nrow(data)}.}
-\item{\code{n_steps}}{ODE steps per pair batch. Default 50.}
-\item{\code{solver}}{\code{"heun"} (default) or \code{"euler"}.}
-\item{\code{refresh_every}}{Regenerate the pairs from \code{teacher} every this many epochs.
-Default NULL (one fixed pair set for the whole run).}
-\item{\code{lambda}}{Weight of the regression term. Default 10.}
-\item{\code{loss}}{\code{"mse"} (default) or \code{"huber"}; \code{huber_delta} (default 1) sets the
-transition point.}
-\item{\code{per_type_weight}}{Weight the per-column residual by \code{\link[=flow_loss_weights]{flow_loss_weights()}}, the
-CDTD-style calibration that stops a wide one-hot block from dominating a single
-numeric column. Default TRUE.}
-\item{\code{adversarial}}{Default TRUE. With FALSE the discriminator step is skipped
-entirely (\code{n_d_steps} stays 0) and the generator is trained on the regression term
-alone: the pure-regression ablation, arm F3 of the plan.}
-\item{\code{noise_match}}{Default TRUE: the regression term feeds the teacher's own \code{z} to
-the generator, which requires \code{noise_dim == ncol(pairs$z)} and errors otherwise.
-FALSE draws fresh noise instead, which breaks the pairing and leaves only a
-distribution-level pull towards the teacher's samples; it exists as an ablation.}
-}
-See \code{\link[=distill_to_gan]{distill_to_gan()}} for a wrapper that builds the pairs and sets \code{noise_dim} for you.}
+\code{pac * (data_dim + n_blocks + data_dim)} input.}
 
 \item{data_type}{"tabular" or "image", controls the data type, defaults to "tabular".}
 
@@ -333,7 +289,7 @@ checkpoints are stored in memory only. If provided, checkpoints are saved to dis
 post-GAN boosting for large training runs with many checkpoints.}
 }
 \value{
-gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings. With \code{conditioning} the returned object additionally carries \code{conditioning_meta}, the per-block metadata (\code{blocks}, block-to-column mapping, categorical block ids, category values, counts and log-frequency tables) that \code{\link[=sample_synthetic_data]{sample_synthetic_data()}} and \code{\link[=impute_synthetic]{impute_synthetic()}} need to build conditions at sampling time. The settings include the resolved \code{regularization}, \code{instance_noise}, \code{augmentation} and \code{conditioning} lists, the final noise ceiling \code{noise_T_final} and augmentation probability \code{aug_p_final}, and \code{n_d_steps}, the total number of discriminator updates performed (useful to equalise training budgets across arms), \code{n_g_steps}, the number of generator updates, and the resolved \code{distillation} recipe (without the pair matrices themselves). With \code{track_loss = TRUE} the trajectories of the noise ceiling and the augmentation probability are returned as \code{losses$noise_T} and \code{losses$aug_p}, and the pair-regression term as \code{losses$distill_loss}.
+gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings. With \code{conditioning} the returned object additionally carries \code{conditioning_meta}, the per-block metadata (\code{blocks}, block-to-column mapping, categorical block ids, category values, counts and log-frequency tables) that \code{\link[=sample_synthetic_data]{sample_synthetic_data()}} and \code{\link[=impute_synthetic]{impute_synthetic()}} need to build conditions at sampling time. The settings include the resolved \code{regularization}, \code{instance_noise}, \code{augmentation} and \code{conditioning} lists, the final noise ceiling \code{noise_T_final} and augmentation probability \code{aug_p_final}, and \code{n_d_steps}, the total number of discriminator updates performed (useful to equalise training budgets across arms) and \code{n_g_steps}, the number of generator updates. With \code{track_loss = TRUE} the trajectories of the noise ceiling and the augmentation probability are returned as \code{losses$noise_T} and \code{losses$aug_p}.
 }
 \description{
 Provides a function to quickly train a GAN model.

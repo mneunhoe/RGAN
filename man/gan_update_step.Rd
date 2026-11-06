@@ -29,8 +29,7 @@ gan_update_step(
   output_info = NULL,
   conditioning = NULL,
   conditioning_meta = NULL,
-  data_matrix = NULL,
-  distillation = NULL
+  data_matrix = NULL
 )
 }
 \arguments{
@@ -98,17 +97,9 @@ Required when \code{conditioning} is given.}
 
 \item{data_matrix}{The training data as a plain numeric matrix. Required when \code{conditioning}
 is given; it is the source of the condition values.}
-
-\item{distillation}{Optional resolved distillation list, as produced by
-\code{resolve_distillation()} inside \code{\link[=gan_trainer]{gan_trainer()}}. When given, a minibatch of teacher pairs
-\verb{(z, x_hat)} is drawn every step and \code{lambda * loss(G(z), x_hat)} is added to the
-generator loss; with \code{adversarial = FALSE} the whole discriminator step is skipped.
-Defaults to NULL (no distillation).}
 }
 \value{
 A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL.
-With \code{distillation} the list also carries \code{distill_loss}, the unweighted (pre-\code{lambda})
-regression term of this step.
 }
 \description{
 Provides a function to perform a single GAN training update step,

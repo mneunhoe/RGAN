@@ -265,19 +265,6 @@ print.trained_RGAN <- function(x, ...) {
       "mean(sign(D(real))) [zero-anchored logit]"
     )))
   }
-  dst <- x$settings$distillation
-  if (!is.null(dst)) {
-    cat(sprintf("  Distillation: pair regression (lambda=%s, %s loss, %s pairs%s%s)\n",
-                format(dst$lambda), dst$loss,
-                format(dst$n_pairs, big.mark = ","),
-                if (isTRUE(dst$adversarial)) "" else ", no adversarial term",
-                if (isTRUE(dst$noise_match)) "" else ", noise not matched"))
-    if (!is.null(dst$refresh_every)) {
-      cat(sprintf("    pairs refreshed every %d epochs (%d %s steps)\n",
-                  as.integer(dst$refresh_every), as.integer(dst$n_steps),
-                  dst$solver))
-    }
-  }
   if (!is.null(x$settings$n_d_steps)) {
     cat(sprintf("  Discriminator steps: %s\n",
                 format(x$settings$n_d_steps, big.mark = ",")))

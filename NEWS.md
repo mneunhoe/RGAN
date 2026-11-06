@@ -102,6 +102,17 @@ Fixes for the defects reported in GitHub issues #3-#27.
   optimizers' classes and hyperparameters (#24).
 
 
+## The 2026 experiment programme
+
+The features below come from the 2026 experiment programme (branch
+`experiments-2026`). Only the arms that paid off in the experiments were
+kept. Left out: the column-token architectures (`TokenGenerator`,
+`TokenDiscriminator`; slower and no better), pair-regression distillation
+of the flow teacher into a GAN (`distill_to_gan()`; a negative result), and
+the DP flow-matching trainer and DP marginal/copula hybrid (a negative pilot,
+and their mechanism parameters depended on the number of records, the issue
+fixed for `dp_gan_trainer()` in #6). They remain on that branch.
+
 ## Any-order conditioning with condition dropout
 
 Experiment 5 of the 2026 experiment plan (report items T3 and L7). One new
@@ -152,12 +163,11 @@ random number draws -- is bit-identical to before.
     (blocks, block-to-column mapping, categorical block ids, category values,
     counts, frequency and log-frequency tables, per-category row index) as
     `trained_gan$conditioning_meta`.
-* `TabularGenerator(..., cond_dim = 0)` and `TokenGenerator(..., cond_dim)`
-  take the concatenated `noise_dim + cond_dim` input; `cond_dim = 0` (the
-  default) leaves both architectures untouched. `gan_trainer()` builds its
-  default generator with `cond_dim = n_blocks + data_dim`, the default MLP
-  discriminator with `pac * (data_dim + cond_dim)` inputs, and a custom
-  `TokenDiscriminator` needs `extra_inputs = n_blocks + data_dim`.
+* `TabularGenerator(..., cond_dim = 0)` takes the concatenated
+  `noise_dim + cond_dim` input; `cond_dim = 0` (the default) leaves the
+  architecture untouched. `gan_trainer()` builds its default generator with
+  `cond_dim = n_blocks + data_dim` and the default MLP discriminator with
+  `pac * (data_dim + cond_dim)` inputs.
 * `sample_synthetic_data(trained_gan, transformer, n_samples, condition)`
   takes a `condition` data.frame in the **original** column space, where `NA`
   means "not observed"; one row is broadcast to all samples, `n` rows give one
@@ -177,74 +187,14 @@ random number draws -- is bit-identical to before.
   the `conditioning = NULL` path against a reference recorded before the
   change.
 
-## Column-token architectures with attention
-
-Experiment 4 of the 2026 experiment plan (report items T1, T4, T5). Two new
-exported `torch::nn_module`s treat every column of the transformed data as a
-token and run attention over those tokens, instead of pushing a flat vector
-through an MLP. Both are drop-in replacements in `gan_trainer()` and neither
-changes any default, so existing code is unaffected.
-
-* `TokenDiscriminator(output_info, d_model, n_heads, n_layers, attention,
-  row_attention, pac, extra_inputs, dropout, sigmoid)` -- an FT-Transformer
-  critic.
-  * Tokeniser: one `nn_linear(dim_j, d_model)` per `output_info` block plus a
-    learned column-ID embedding, so a width-1 numeric block becomes
-    `W_j x_j + b_j` (Gorishniy et al., NeurIPS 2021).
-  * `attention = "l2"` (the default) is the ViTGAN attention of Lee et al.
-    (ICLR 2022, arXiv:2107.04589): logits `-||q_i - k_j||^2 / sqrt(d_head)`
-    with the query and key projections **tied** to one weight matrix.
-    Dot-product attention is not Lipschitz and, as that paper shows, spectral
-    norm or a gradient penalty alone do not stabilise a transformer critic.
-    `attention = "dot"` gives the standard scaled dot product. The squared
-    distance is computed by expansion rather than with `torch_cdist()`, whose
-    square root has an undefined derivative on the zero diagonal that tied
-    Q/K weights produce.
-  * `row_attention = TRUE` adds a SAINT-style inter-sample attention block
-    after every column-attention block (Somepalli et al. 2021,
-    arXiv:2106.01342): the token tensor is transposed so the batch becomes the
-    sequence dimension and each token attends across the rows of the
-    minibatch. This is a learned, differentiable generalisation of PacGAN and
-    minibatch discrimination. Cost is O(batch^2) per token, which is fine for
-    batches of a few hundred rows.
-  * `pac > 1` is supported and must match the `pac` given to `gan_trainer()`:
-    the `pac` samples of a pack become `pac * n_cols` tokens, sharing the
-    column-ID embedding and carrying an extra learned pack-slot embedding, so
-    the critic can compare the samples inside a pack.
-  * `extra_inputs` reserves one additional token, fed by its own linear layer
-    from the last `extra_inputs` columns of each sample. This is the slot for
-    an instance-noise level sigma or a condition vector.
-  * Pooling is by a learned `[CLS]` token, then LayerNorm and
-    `nn_linear(d_model, 1)`, with an optional sigmoid.
-  * The module contains no in-place operations, so it is twice differentiable
-    and works with `regularization = list(type = "r1r2", gamma = ...)`.
-* `TokenGenerator(noise_dim, output_info, d_model, n_heads, n_layers,
-  attention, tau, dropout, cond_dim)` -- the generator-side counterpart. The
-  noise (optionally concatenated with a condition vector) is projected to
-  `n_cols` tokens, column-ID embeddings are added, `n_layers` pre-LayerNorm
-  transformer blocks run over the tokens, and each token is decoded by its own
-  `nn_linear(d_model, dim_j)` head. The `forward(input, hard = NULL)` signature
-  matches `TabularGenerator`.
-
-Because there is no positional encoding beyond the learned column-ID
-embedding, both modules are permutation equivariant in the columns (report
-item T4); the test suite checks this explicitly.
-
-The per-block output activations of `TabularGenerator` are now in an internal
-helper, `apply_output_heads(data, output_info, tau, hard, training)`, shared
-with `TokenGenerator`, so the two generators emit values in exactly the same
-space. `TabularGenerator`'s behaviour is unchanged; its `output_info`
-validation moved to the internal `validate_output_heads()`.
-
-### Corrected `SelfAttention` documentation
+## Corrected `SelfAttention` documentation
 
 The internal `SelfAttention` layer used by `TabularGenerator(attention = TRUE)`
 was documented as capturing "relationships between features" and dependencies
 between columns. It does no such thing: it splits *one hidden vector* into
 `num_heads` slices and attends over those slices, with nothing aligned to the
 data columns. The layer is unchanged for backward compatibility and the
-documentation now describes it as hidden-vector slice mixing, pointing at
-`TokenGenerator`/`TokenDiscriminator` for genuine per-column attention.
+documentation now describes it as hidden-vector slice mixing.
 
 ## Instance noise and adaptive augmentation
 
@@ -423,68 +373,12 @@ defaults to the previous behaviour, so existing code is unaffected.
 * `print.trained_RGAN()` reports the regularization type and gamma (and the
   lazy interval, Adam betas and discriminator step count when set).
 
-## One-step distillation of a flow-matching teacher
-
-The second half of Experiment 6 (report item L5): the Diffusion2GAN recipe of
-Kang et al. (ECCV 2024, arXiv:2405.05967) applied to tables. The teacher ODE
-is a deterministic map from noise `z` to a sample `x_hat`; the GAN generator
-is trained with `L_adv + lambda * ||G(z) - x_hat||^2` on exactly those pairs,
-so the student keeps one-step sampling while inheriting the teacher's
-coverage. As with every other addition, `distillation = NULL` leaves the
-training path -- including the random number draws -- bit-identical to before.
-
-* `gan_trainer(..., distillation = list(pairs, teacher, n_pairs, n_steps,
-  solver, refresh_every, lambda, loss, huber_delta, per_type_weight,
-  adversarial, noise_match))`. Every generator step draws a minibatch of
-  `(z_i, x_i)` pairs, evaluates `G(z_i)` and adds `lambda` times the mean
-  regression loss to the generator loss.
-  * The adversarial part is **unchanged**: it still uses a fresh noise draw
-    and the real data batch. The discriminator never sees the teacher's
-    targets as "real", so this is distillation of the noise-to-data map, not
-    training on teacher samples.
-  * `pairs` is a `list(z, x)` from `flow_pairs()`. If it is missing, `teacher`
-    (a `"trained_RFlow"`) generates `n_pairs` (default `4 * nrow(data)`) pairs
-    with `n_steps` (default 50) `solver` (default Heun) steps at the start of
-    training, and again every `refresh_every` epochs if that is set. Passing a
-    bare `"trained_RFlow"` as `distillation` is shorthand for
-    `list(teacher = ...)`.
-  * `noise_match = TRUE` (default) feeds the teacher's own `z` to the
-    generator, which is what makes the regression a *trajectory* regression;
-    it requires `noise_dim == ncol(pairs$z)` and otherwise errors with the
-    value to set. `noise_match = FALSE` draws fresh noise, an ablation that
-    keeps only a distribution-level pull.
-  * `loss` is `"mse"` (default) or `"huber"`, and `per_type_weight = TRUE`
-    weights the per-column residual with `flow_loss_weights()`, the same
-    CDTD-style block calibration the teacher trains under.
-  * `adversarial = FALSE` skips the discriminator step **entirely** -- no real
-    batch, no penalty, no `d_optim$step()` -- and trains the generator on the
-    regression term alone. `settings$n_d_steps` then stays 0, and the new
-    `settings$n_g_steps` counts the generator updates.
-  * With `track_loss = TRUE` the per-step regression term (before `lambda`) is
-    returned as `losses$distill_loss`, and the recipe is recorded in
-    `settings$distillation`.
-
-* `distill_to_gan(teacher, data, transformer, n_pairs, n_steps, lambda,
-  solver, pair_seed, distillation, ...)` -- exported wrapper that generates
-  the pairs, sets `noise_dim` to the teacher's `data_dim` and forwards
-  everything else to `gan_trainer()`. A `data.frame` `data` is transformed
-  with the supplied `transformer`, whose `output_info` is used by default.
-
-* New internals: `distill_regression_loss()` (weighted MSE / Huber, exactly
-  zero at the targets), `resolve_distillation()` and `validate_flow_pairs()`.
-  The `print()` method for `"trained_RGAN"` reports the recipe and the
-  generator-step count.
-
-Functional check on `adult` (quantile + cos/sin, 5040 steps at batch 500,
-96,516 pairs at 50 Heun steps, CPU): see `experiments/results/exp6_distill`.
-
 ## A flow-matching teacher (`R/flow-matching.R`)
 
 Experiment 6 of the 2026 experiment plan, report item L5. A conditional
 flow-matching model that RGAN can train on its own transformed data, intended
-both as a diffusion-family fidelity reference and as the teacher of a later
-one-step distillation. Nothing here touches `gan_trainer()`; distillation is a
-separate, later change.
+as a diffusion-family model in its own right; it was the best arm of the
+programme. Nothing here touches `gan_trainer()`.
 
 * `FlowVectorField(data_dim, hidden_units, time_embed_dim, activation,
   dropout)` -- an exported `torch::nn_module` for the velocity field

@@ -87,8 +87,7 @@ in deeper networks (enabled by default when consecutive layers have same width)
 \item \strong{Multiple activation functions:} ReLU, LeakyReLU, GELU, SiLU
 \item \strong{Weight initialization:} Xavier or Kaiming initialization
 \item \strong{Self-Attention:} Hidden-vector slice mixing (see
-\code{\link[=SelfAttention]{SelfAttention()}}; for attention over column tokens use
-\code{\link[=TokenGenerator]{TokenGenerator()}})
+\code{\link[=SelfAttention]{SelfAttention()}})
 \item \strong{Progressive Training:} Gradually increase network capacity
 }
 }

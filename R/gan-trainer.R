@@ -137,49 +137,7 @@
 #'   }
 #'   A custom `generator` must accept the concatenated
 #'   `noise_dim + n_blocks + data_dim` input, and a custom `discriminator` the
-#'   `pac * (data_dim + n_blocks + data_dim)` input (for a
-#'   [TokenDiscriminator()] set `extra_inputs = n_blocks + data_dim`).
-#' @param distillation Optional Diffusion2GAN-style pair-regression distillation from a
-#'   flow-matching teacher, given as a list. Defaults to NULL (no distillation; the training
-#'   path is then bit-identical to the previous behaviour). This is Experiment 6 of the 2026
-#'   experiment plan (report item L5), the recipe of Kang et al. (ECCV 2024, arXiv:2405.05967).
-#'
-#'   The teacher's ODE is a deterministic map from noise `z` to a sample `x_hat`. Every
-#'   generator step draws a minibatch of those pairs and adds
-#'   `lambda * weighted_mean_loss(G(z_i), x_hat_i)` to the generator loss. The adversarial part
-#'   is untouched: it still uses a *fresh* noise draw and the real data batch, so the
-#'   discriminator never sees the teacher's output as "real". The pairs only pull the
-#'   generator's noise-to-data map towards the teacher's, which is what lets a one-step
-#'   student inherit the teacher's coverage.
-#'
-#'   Fields (with defaults):
-#'   \describe{
-#'     \item{`pairs`}{A list `list(z = matrix, x = matrix)` from [flow_pairs()]. If NULL the
-#'       pairs are generated from `teacher`.}
-#'     \item{`teacher`}{A trained teacher of class `"trained_RFlow"`. Used to generate `pairs`
-#'       when they are not supplied, and to refresh them when `refresh_every` is set. A bare
-#'       `"trained_RFlow"` object passed as `distillation` is shorthand for
-#'       `list(teacher = <that object>)`.}
-#'     \item{`n_pairs`}{Number of pairs to generate from `teacher`. Default `4 * nrow(data)`.}
-#'     \item{`n_steps`}{ODE steps per pair batch. Default 50.}
-#'     \item{`solver`}{`"heun"` (default) or `"euler"`.}
-#'     \item{`refresh_every`}{Regenerate the pairs from `teacher` every this many epochs.
-#'       Default NULL (one fixed pair set for the whole run).}
-#'     \item{`lambda`}{Weight of the regression term. Default 10.}
-#'     \item{`loss`}{`"mse"` (default) or `"huber"`; `huber_delta` (default 1) sets the
-#'       transition point.}
-#'     \item{`per_type_weight`}{Weight the per-column residual by [flow_loss_weights()], the
-#'       CDTD-style calibration that stops a wide one-hot block from dominating a single
-#'       numeric column. Default TRUE.}
-#'     \item{`adversarial`}{Default TRUE. With FALSE the discriminator step is skipped
-#'       entirely (`n_d_steps` stays 0) and the generator is trained on the regression term
-#'       alone: the pure-regression ablation, arm F3 of the plan.}
-#'     \item{`noise_match`}{Default TRUE: the regression term feeds the teacher's own `z` to
-#'       the generator, which requires `noise_dim == ncol(pairs$z)` and errors otherwise.
-#'       FALSE draws fresh noise instead, which breaks the pairing and leaves only a
-#'       distribution-level pull towards the teacher's samples; it exists as an ablation.}
-#'   }
-#'   See [distill_to_gan()] for a wrapper that builds the pairs and sets `noise_dim` for you.
+#'   `pac * (data_dim + n_blocks + data_dim)` input.
 #' @param data_type "tabular" or "image", controls the data type, defaults to "tabular".
 #' @param generator The generator network. Expects a neural network provided as torch::nn_module. Default is NULL which will create a simple fully connected neural network.
 #' @param generator_optimizer The optimizer for the generator network. Expects a torch::optim_xxx function, e.g. torch::optim_adam(). Default is NULL which will setup `torch::optim_adam(g_net$parameters, lr = base_lr)`.
@@ -233,7 +191,7 @@
 #'   checkpoints are stored in memory only. If provided, checkpoints are saved to disk, enabling
 #'   post-GAN boosting for large training runs with many checkpoints.
 #'
-#' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings. With `conditioning` the returned object additionally carries `conditioning_meta`, the per-block metadata (`blocks`, block-to-column mapping, categorical block ids, category values, counts and log-frequency tables) that [sample_synthetic_data()] and [impute_synthetic()] need to build conditions at sampling time. The settings include the resolved `regularization`, `instance_noise`, `augmentation` and `conditioning` lists, the final noise ceiling `noise_T_final` and augmentation probability `aug_p_final`, and `n_d_steps`, the total number of discriminator updates performed (useful to equalise training budgets across arms), `n_g_steps`, the number of generator updates, and the resolved `distillation` recipe (without the pair matrices themselves). With `track_loss = TRUE` the trajectories of the noise ceiling and the augmentation probability are returned as `losses$noise_T` and `losses$aug_p`, and the pair-regression term as `losses$distill_loss`.
+#' @return gan_trainer trains the neural networks and returns an object of class trained_RGAN that contains the last generator, discriminator and the respective optimizers, as well as the settings. With `conditioning` the returned object additionally carries `conditioning_meta`, the per-block metadata (`blocks`, block-to-column mapping, categorical block ids, category values, counts and log-frequency tables) that [sample_synthetic_data()] and [impute_synthetic()] need to build conditions at sampling time. The settings include the resolved `regularization`, `instance_noise`, `augmentation` and `conditioning` lists, the final noise ceiling `noise_T_final` and augmentation probability `aug_p_final`, and `n_d_steps`, the total number of discriminator updates performed (useful to equalise training budgets across arms) and `n_g_steps`, the number of generator updates. With `track_loss = TRUE` the trajectories of the noise ceiling and the augmentation probability are returned as `losses$noise_T` and `losses$aug_p`.
 #' @export
 #'
 #' @examples
@@ -269,7 +227,6 @@ gan_trainer <-
            instance_noise = NULL,
            augmentation = NULL,
            conditioning = NULL,
-           distillation = NULL,
            data_type = "tabular",
            generator = NULL,
            generator_optimizer = NULL,
@@ -580,25 +537,6 @@ gan_trainer <-
       }
     }
 
-# Pair-regression distillation -------------------------------------------------
-    # Resolved here because it needs data_dim and nrow(data). Everything below
-    # is skipped when `distillation` is NULL, including every random draw, so
-    # that path stays bit-identical.
-    distill <- NULL
-    if (!is.null(distillation) && !isFALSE(distillation)) {
-      if (!inherits(data, "torch_tensor")) {
-        stop("distillation requires `data` to be a matrix, array or torch_tensor")
-      }
-      distill <- resolve_distillation(
-        distillation,
-        noise_dim = noise_dim,
-        data_dim = data_dim,
-        n_rows = nrow(data),
-        output_info = output_info,
-        device = device
-      )
-    }
-
 # Set up the neural networks if none are provided ------------------------------
     if (is.null(generator)) {
       if (!is.null(output_info)) {
@@ -777,25 +715,10 @@ gan_trainer <-
 # Count the discriminator updates actually performed ---------------------------
     n_d_steps <- 0L
     n_g_steps <- 0L
-    distill_trace <- NULL
 
 
 # Start GAN training loop ------------------------------------------------------
     for (i in 1:(epochs * steps)) {
-
-      # Refresh the distillation pairs from the teacher ----------------------
-      if (!is.null(distill) && !is.null(distill$refresh_every) &&
-          i > 1L && (i %% steps) == 1L &&
-          (((i %/% steps)) %% distill$refresh_every) == 0L) {
-        new_pairs <- flow_pairs(distill$teacher, n_pairs = distill$n_pairs,
-                                n_steps = distill$n_steps,
-                                solver = distill$solver)
-        distill$pairs <- validate_flow_pairs(new_pairs, data_dim)
-        distill$z_t <- torch::torch_tensor(
-          distill$pairs$z, dtype = torch::torch_float())$to(device = device)
-        distill$x_t <- torch::torch_tensor(
-          distill$pairs$x, dtype = torch::torch_float())$to(device = device)
-      }
 
       step_loss <- gan_update_step(
         data,
@@ -822,14 +745,10 @@ gan_trainer <-
         output_info = output_info,
         conditioning = conditioning,
         conditioning_meta = conditioning_meta,
-        data_matrix = data_matrix,
-        distillation = distill
+        data_matrix = data_matrix
       )
 
-      # The pure-regression ablation performs no discriminator update at all.
-      if (is.null(distill) || isTRUE(distill$adversarial)) {
-        n_d_steps <- n_d_steps + 1L
-      }
+      n_d_steps <- n_d_steps + 1L
       n_g_steps <- n_g_steps + 1L
 
       if(track_loss & length(losses) == 0){
@@ -838,9 +757,6 @@ gan_trainer <-
       if(track_loss & length(losses) > 0){
         losses$g_loss <- c(losses$g_loss, step_loss$g_loss)
         losses$d_loss <- c(losses$d_loss, step_loss$d_loss)
-      }
-      if (track_loss && !is.null(step_loss$distill_loss)) {
-        distill_trace <- c(distill_trace, step_loss$distill_loss)
       }
 
       # Record the controller trajectories on every controller update ---------
@@ -1064,10 +980,6 @@ gan_trainer <-
         if (is.null(losses)) losses <- list()
         losses$aug_p <- aug_p_trace
       }
-      if (!is.null(distill_trace)) {
-        if (is.null(losses)) losses <- list()
-        losses$distill_loss <- distill_trace
-      }
     }
 
     output <-  list(
@@ -1091,12 +1003,6 @@ gan_trainer <-
                       augmentation = augmentation,
                       conditioning = conditioning,
                       cond_dim = cond_dim,
-                      # The recipe, without the (potentially very large) pair
-                      # matrices, the teacher module and the device tensors.
-                      distillation = if (is.null(distill)) NULL else
-                        distill[c("lambda", "loss", "huber_delta", "adversarial",
-                                  "noise_match", "per_type_weight", "n_pairs",
-                                  "n_steps", "solver", "refresh_every", "seed")],
                       noise_T_final = if (is.null(instance_noise)) NULL else na_state$T,
                       aug_p_final = if (is.null(augmentation)) NULL else na_state$p,
                       n_d_steps = n_d_steps,
@@ -1182,14 +1088,7 @@ gan_trainer <-
 #'   Required when `conditioning` is given.
 #' @param data_matrix The training data as a plain numeric matrix. Required when `conditioning`
 #'   is given; it is the source of the condition values.
-#' @param distillation Optional resolved distillation list, as produced by
-#'   `resolve_distillation()` inside [gan_trainer()]. When given, a minibatch of teacher pairs
-#'   `(z, x_hat)` is drawn every step and `lambda * loss(G(z), x_hat)` is added to the
-#'   generator loss; with `adversarial = FALSE` the whole discriminator step is skipped.
-#'   Defaults to NULL (no distillation).
 #' @return A list with generator and discriminator losses if track_loss is TRUE, otherwise NULL.
-#'   With `distillation` the list also carries `distill_loss`, the unweighted (pre-`lambda`)
-#'   regression term of this step.
 #' @export
 gan_update_step <-
   function(data,
@@ -1216,11 +1115,7 @@ gan_update_step <-
            output_info = NULL,
            conditioning = NULL,
            conditioning_meta = NULL,
-           data_matrix = NULL,
-           distillation = NULL) {
-    # The pure-regression ablation (distillation$adversarial = FALSE) skips the
-    # whole discriminator step, so the generator sees only the teacher pairs.
-    do_adv <- is.null(distillation) || isTRUE(distillation$adversarial)
+           data_matrix = NULL) {
     # Get a fresh batch of data ------------------------------------------------
     # With conditioning the real batch and its condition are drawn together:
     # for "single_column" the batch is sampled *by* the condition (CTGAN's
@@ -1232,11 +1127,6 @@ gan_update_step <-
     cond_values <- NULL
     d_loss <- NULL
     sigma <- NULL
-    # >>> adversarial path: everything down to the matching `} else {` below is
-    # the ordinary GAN step and runs unless distillation$adversarial is FALSE.
-    # The body is deliberately left at its original indentation so that the
-    # diff against the pre-distillation trainer stays readable.
-    if (do_adv) {
     if (!is.null(conditioning)) {
       if (is.null(conditioning_meta) || is.null(data_matrix)) {
         stop("conditioning requires conditioning_meta and data_matrix")
@@ -1281,7 +1171,7 @@ gan_update_step <-
 
     # Append the condition per sample, then pack for PacGAN --------------------
     # The condition goes in before packing, so a packed sample slot is
-    # [row, condition]; that is the layout TokenDiscriminator's `extra_inputs`
+    # [row, condition]; that is the layout a custom discriminator must accept,
     # expects, and for the default MLP discriminator it only widens the input.
     real_data_packed <- attach_condition(real_data, cond)
     fake_data_packed <- attach_condition(fake_data, cond)
@@ -1351,9 +1241,6 @@ gan_update_step <-
 
     # Update the generator -----------------------------------------------------
     # Get a fresh noise sample -------------------------------------------------
-    # Note that this is a *fresh* draw even under distillation: the adversarial
-    # term never reuses the teacher's pair noise, and the discriminator never
-    # sees the teacher's targets as real data.
     z <-
       sample_noise(c(batch_size, noise_dim))$to(device = device)
     # Produce fake data --------------------------------------------------------
@@ -1407,50 +1294,6 @@ gan_update_step <-
         conditioning_consistency_loss(fake_data_clean, cond_mask, cond_values,
                                       conditioning_meta)
     }
-    # <<< end of the adversarial path
-    } else {
-      # Pure-regression ablation: no discriminator, no real batch, no
-      # adversarial term. The generator loss starts at zero and the pair
-      # regression below is all there is. `cond` stays NULL, so the generator
-      # is fed the all-unobserved condition when conditioning is on.
-      g_loss <- torch::torch_zeros(c(1), device = device)$squeeze()
-    }
-
-    # Pair-regression distillation term ----------------------------------------
-    # Diffusion2GAN (Kang et al., ECCV 2024): draw a minibatch of teacher pairs
-    # (z_i, x_i) and pull G(z_i) towards x_i. With `noise_match` the generator
-    # is fed the teacher's own z, so the student learns the teacher's
-    # noise-to-data map and not merely its marginal.
-    distill_value <- NULL
-    if (!is.null(distillation)) {
-      n_pairs <- distillation$z_t$size(1)
-      take <- min(batch_size, n_pairs)
-      idx <- torch::torch_tensor(
-        sample.int(n_pairs, take, replace = take > n_pairs),
-        dtype = torch::torch_long(), device = distillation$z_t$device)
-      x_target <- distillation$x_t[idx, ]
-      z_pair <- if (isTRUE(distillation$noise_match)) {
-        distillation$z_t[idx, ]
-      } else {
-        # Ablation: the pairing is broken, only the targets are used.
-        sample_noise(c(take, noise_dim))$to(device = device)
-      }
-      # The all-unobserved condition, the unconditional mode cond_dropout
-      # trains, so that the regression target (an unconditional teacher
-      # sample) is compared against an unconditional generator draw.
-      cond_pair <- NULL
-      if (!is.null(conditioning) && !is.null(conditioning_meta)) {
-        cond_pair <- torch::torch_zeros(
-          c(take, as.integer(conditioning_meta$cond_dim)),
-          device = device)$to(dtype = z_pair$dtype)
-      }
-      g_fake_pair <- g_net(attach_condition(z_pair, cond_pair))
-      distill_loss <- distill_regression_loss(
-        g_fake_pair, x_target, weights = distillation$weight_t,
-        loss = distillation$loss, delta = distillation$huber_delta)
-      distill_value <- torch::as_array(distill_loss$detach()$cpu())
-      g_loss <- g_loss + distillation$lambda * distill_loss
-    }
 
     # What follows is one update step for the generator net --------------------
     # First set all previous gradients to zero
@@ -1467,7 +1310,7 @@ gan_update_step <-
     # discriminator has just seen; this is the ADA heuristic of Karras et al.
     # (2020), also used by Diffusion-GAN. For the sigmoid output of the
     # "original" value function the sign is taken around 0.5.
-    if (do_adv && !is.null(na_state)) {
+    if (!is.null(na_state)) {
       needs_update <-
         (!is.null(instance_noise) && isTRUE(instance_noise$adaptive) &&
            (step %% instance_noise$update_every) == 0) ||
@@ -1506,14 +1349,10 @@ gan_update_step <-
 
     if(track_loss){
 
-      out <- list(
+      return(list(
         g_loss = torch::as_array(g_loss$detach()$cpu()),
-        # With adversarial = FALSE there is no discriminator step; report 0 so
-        # that downstream collapse checks see a finite trajectory.
-        d_loss = if (is.null(d_loss)) 0 else torch::as_array(d_loss$detach()$cpu())
-      )
-      if (!is.null(distill_value)) out$distill_loss <- distill_value
-      return(out)
+        d_loss = torch::as_array(d_loss$detach()$cpu())
+      ))
 
 
     }

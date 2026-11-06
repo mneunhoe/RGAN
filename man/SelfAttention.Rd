@@ -36,7 +36,6 @@ relationships between features" and learns dependencies between columns.
 That was wrong: nothing in the layer is aligned with the columns of the
 data. The layer is kept unchanged for backward compatibility (it is what
 \code{TabularGenerator(attention = TRUE)} builds) and only the description is
-corrected. For genuine per-column attention use \code{\link[=TokenGenerator]{TokenGenerator()}} on the
-generator side and \code{\link[=TokenDiscriminator]{TokenDiscriminator()}} on the critic side.
+corrected.
 }
 \keyword{internal}

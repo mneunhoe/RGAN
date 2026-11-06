@@ -15,8 +15,7 @@ validate_output_heads(output_info, module = "TabularGenerator")
 \code{invisible(TRUE)}; called for its side effect of erroring.
 }
 \description{
-Internal validator shared by \code{\link[=TabularGenerator]{TabularGenerator()}} and
-\code{\link[=TokenGenerator]{TokenGenerator()}}. Checks that every \code{output_info} element is a
+Internal validator used by \code{\link[=TabularGenerator]{TabularGenerator()}}. Checks that every \code{output_info} element is a
 \code{list(dimension, type)} with a type this package has a generator head for,
 and that \code{"cossin"} blocks are two-dimensional.
 }

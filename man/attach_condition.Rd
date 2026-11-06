@@ -18,7 +18,6 @@ A torch tensor.
 The condition is appended per sample, \emph{before} PacGAN packing,
 so that the packed discriminator input is
 \verb{(batch / pac, pac * (data_dim + cond_dim))} with the
-\verb{[row, condition]} layout that \code{\link[=TokenDiscriminator]{TokenDiscriminator()}} expects from its
-\code{extra_inputs} argument.
+\verb{[row, condition]} layout a custom discriminator must accept.
 }
 \keyword{internal}

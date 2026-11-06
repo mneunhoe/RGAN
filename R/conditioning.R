@@ -426,8 +426,7 @@ build_step_condition <- function(data, data_matrix, batch_size, conditioning,
 #' @description The condition is appended per sample, *before* PacGAN packing,
 #'   so that the packed discriminator input is
 #'   `(batch / pac, pac * (data_dim + cond_dim))` with the
-#'   `[row, condition]` layout that [TokenDiscriminator()] expects from its
-#'   `extra_inputs` argument.
+#'   `[row, condition]` layout a custom discriminator must accept.
 #'
 #' @param x A (batch x data_dim) torch tensor.
 #' @param cond NULL or a (batch x cond_dim) torch tensor.

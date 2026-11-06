@@ -25,9 +25,7 @@ A \verb{(batch, data_dim)} torch_tensor with the heads applied.
 \description{
 Internal helper that applies the activation of each
 \code{output_info} block to the corresponding slice of a generator's raw
-\verb{(batch, data_dim)} output. It is the single implementation used by both
-\code{\link[=TabularGenerator]{TabularGenerator()}} and \code{\link[=TokenGenerator]{TokenGenerator()}}, so the two generators are
-guaranteed to emit values in the same space.
+\verb{(batch, data_dim)} output, as used by \code{\link[=TabularGenerator]{TabularGenerator()}}.
 
 The heads are:
 \itemize{
